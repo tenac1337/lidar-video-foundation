@@ -4,6 +4,7 @@ Thresholds are engineering policies for upright tabletop chess pieces, not senso
 accuracy guarantees. Board-like returns are unknown object depth, never filled.
 """
 
+import chess
 import cv2
 import numpy as np
 
@@ -11,6 +12,7 @@ MIN_NATIVE_CORE = 24
 MIN_VALID_FRACTION = 0.65
 MIN_FOREGROUND_FRACTION = 0.70
 MIN_HEIGHT_M = 0.015
+MIN_SQUARE_FRACTION = 0.90
 
 
 def sample_ids(data, frame):
@@ -47,7 +49,7 @@ def unique_points(points, ids, selected):
     return points.reshape(-1, 3)[rows[first]]
 
 
-def assess_depth(data, calibration, frame, mask, *, points=None):
+def assess_depth(data, calibration, frame, mask, *, points=None, square=None):
     from lidar_video.reconstruction import calibrated_points
 
     mask = np.asarray(mask, dtype=bool)
@@ -87,11 +89,24 @@ def assess_depth(data, calibration, frame, mask, *, points=None):
         reasons.append("board-like or implausible depth inside object")
     if len(cloud) < MIN_NATIVE_CORE:
         reasons.append("insufficient trusted foreground samples")
+    square_fraction = None
+    if square is not None:
+        index = chess.parse_square(square)
+        size, gap = calibration["square_size_m"], calibration.get("center_gap_m", 0)
+        center = (np.array([chess.square_file(index), chess.square_rank(index)]) - 3.5) * size
+        center[1] += np.sign(center[1]) * gap / 2
+        square_fraction = (
+            float(np.mean(np.all(np.abs(cloud[:, :2] - center) <= size / 2, axis=1))) if len(cloud) else 0.0
+        )
+        if square_fraction < MIN_SQUARE_FRACTION:
+            reasons.append("foreground depth spans multiple squares")
     quality = dict(
         passed=not reasons,
         reasons=reasons,
         native_core_samples=len(core_points),
         trusted_native_samples=len(cloud),
+        square=square,
+        native_square_fraction=square_fraction,
         valid_fraction=valid_fraction,
         core_valid_fraction=core_valid_fraction,
         foreground_fraction=foreground_fraction,
@@ -101,6 +116,7 @@ def assess_depth(data, calibration, frame, mask, *, points=None):
             min_valid_fraction=MIN_VALID_FRACTION,
             min_foreground_fraction=MIN_FOREGROUND_FRACTION,
             min_height_m=MIN_HEIGHT_M,
+            min_square_fraction=MIN_SQUARE_FRACTION,
         ),
     )
     return quality, trusted, cloud

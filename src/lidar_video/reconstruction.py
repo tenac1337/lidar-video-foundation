@@ -67,6 +67,14 @@ def collect_squares(data, calibration, frames, masks=None, min_height=0.006):
     collected = {s: [] for s in chess.SQUARES}
     colors = {s: [] for s in chess.SQUARES}
     observations = {s: [] for s in chess.SQUARES}
+    assignments = None
+    if masks is not None and (Path(masks) / "instances.json").exists():
+        metadata = json.loads((Path(masks) / "instances.json").read_text())
+        if metadata.get("schema") != "chess-instance-assignments-v1" or not isinstance(
+            metadata.get("frames"), dict
+        ):
+            raise ValueError("Invalid instance assignment manifest")
+        assignments = metadata["frames"]
     for frame in frames:
         points = calibrated_points(data, calibration, frame)
         z = data["depth"][frame]
@@ -84,6 +92,17 @@ def collect_squares(data, calibration, frames, masks=None, min_height=0.006):
             good &= labels > 0
         grid = np.floor(uv[good]).astype(int)
         squares = grid[:, 0] + 8 * grid[:, 1]
+        if assignments is not None:
+            mapping = assignments.get(str(frame))
+            if not isinstance(mapping, dict) or any(
+                name not in chess.SQUARE_NAMES for name in mapping.values()
+            ):
+                raise ValueError("Invalid frame instance assignments")
+            if any(str(label) not in mapping for label in np.unique(labels[labels > 0])):
+                raise ValueError("Every nonzero mask label requires an instance assignment")
+            # Preserve segmented object identity. Cross-square points must remain
+            # evidence against that object, never become an invented neighbor.
+            squares = np.array([chess.parse_square(mapping[str(label)]) for label in labels[good]], dtype=int)
         xyz, rgb = points[good], data["rgb"][frame][good]
         for square in np.unique(squares):
             selected = squares == square
@@ -249,7 +268,7 @@ def reconstruct(
         if name in entries:
             try:
                 mesh, learned = import_learned_mesh(
-                    entries[name], manifest_root, data, calibration, points[square]
+                    dict(entries[name], square=name), manifest_root, data, calibration, points[square]
                 )
                 check_mesh_bounds(mesh, lower, upper)
             except MeshQualityError as error:

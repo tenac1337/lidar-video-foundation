@@ -63,7 +63,7 @@ def assign_instances(data, cal, reference_frame, raw, ambiguous_policy="error"):
         if name in conflicts:
             excluded.append(dict(index=index, square=name, reason="ambiguous square assignment"))
             continue
-        quality, _, _ = assess_depth(data, cal, reference_frame, mask, points=points)
+        quality, _, _ = assess_depth(data, cal, reference_frame, mask, points=points, square=name)
         if not quality["passed"]:
             excluded.append(dict(index=index, square=name, reason="unreliable object depth", quality=quality))
             continue
@@ -113,7 +113,7 @@ def plan_instances(data, calibration, detections_by_frame, ambiguous_policy="err
                     )
                 )
                 continue
-            quality, trusted, cloud = assess_depth(data, calibration, frame, mask)
+            quality, trusted, cloud = assess_depth(data, calibration, frame, mask, square=obj["square"])
             if not quality["passed"]:
                 # Resolve pixel overlap before the final quality decision.
                 audit["excluded"].append(
@@ -216,7 +216,8 @@ def run_gpu(
         out / "status.json",
         dict(
             gpu=torch.cuda.get_device_name(0),
-            stages={"sam3": "passed"},
+            stages={"sam3": "passed", "instance_evidence": "passed" if selected else "abstained"},
+            status="ready_for_inference" if selected else "abstained",
             candidate_frames=frames,
             reliable_objects=len(selected),
         ),
@@ -227,14 +228,20 @@ def run_gpu(
         )
     trusted_masks_dir = out / "trusted_masks"
     trusted_masks_dir.mkdir()
+    assignments = {}
     for frame in frames:
+        assignments[str(frame)] = {}
         Image.fromarray(masks[frame]).save(masks_dir / f"{frame:05d}.png")
         trusted_labels = np.zeros_like(masks[frame])
-        for item in selected.values():
+        for name, item in selected.items():
             for observation in item["observations"]:
                 if observation["frame"] == frame:
                     trusted_labels[observation["trusted"]] = observation["label"]
+                    assignments[str(frame)][str(observation["label"])] = name
         Image.fromarray(trusted_labels).save(trusted_masks_dir / f"{frame:05d}.png")
+    write_json(
+        trusted_masks_dir / "instances.json", dict(schema="chess-instance-assignments-v1", frames=assignments)
+    )
     write_json(
         masks_dir / "objects.json",
         [

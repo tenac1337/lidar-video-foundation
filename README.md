@@ -12,7 +12,7 @@ This is the core implementation for an iPhone LiDAR/video reconstruction project
 - One shared scene description drives MuJoCo simulation, scene graphs, and executable Scenic samples.
 - Geometry profiling, original-input checks, held-out pose experiments, and physics replay verification.
 
-**Detailed real-piece reconstruction remains unresolved.** The real iPhone A100 run generated 14 meshes; none passed every geometry check. Its simulation used 30 coarse depth completions. Profiling found suspect foreground depth and inconsistent placement across views. The current fallback is a prototype, not validated physical geometry. See [status and limitations](docs/STATUS.md).
+**Detailed real-piece reconstruction remains unresolved.** The real iPhone A100 run generated 14 meshes; none passed every geometry check. Its simulation used 30 coarse depth completions. Profiling found suspect foreground depth and inconsistent placement across views. A subsequent three-view A100 run generated one candidate, which also failed held-out checks. Its fallback exposed cross-square instance splitting; the follow-up preserves identity and rejects mixed-square depth before inference. The current fallback is a prototype, not validated physical geometry. See [status and limitations](docs/STATUS.md).
 
 ## Install
 

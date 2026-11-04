@@ -67,7 +67,9 @@ def validate_and_align(mesh, entry, root, data, calibration):
         labels = np.asarray(Image.open(root / o["mask"]))
         if labels.ndim != 2 or labels.dtype.kind not in "iu":
             raise ValueError("Observation masks must be indexed integer images")
-        quality, _, cloud = assess_depth(data, calibration, frame, labels == label)
+        quality, _, cloud = assess_depth(
+            data, calibration, frame, labels == label, square=entry.get("square")
+        )
         if not quality["passed"]:
             raise MeshQualityError(f"Unreliable object depth in frame {frame}: {quality['reasons']}")
         evidence.append(dict(frame=frame, label=label, labels=labels, cloud=cloud, quality=quality))
