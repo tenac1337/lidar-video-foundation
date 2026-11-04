@@ -1,0 +1,32 @@
+{
+  "square_size_m": 0.045,
+  "board_from_world": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "origin": "board center at top surface",
+  "axes": "x toward h-file, y toward rank 8, z up",
+  "evidence": "supplied synthetic calibration; board pose is NOT detected"
+}
