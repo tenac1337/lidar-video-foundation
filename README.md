@@ -8,7 +8,7 @@ This is the core implementation for an iPhone LiDAR/video reconstruction project
 
 - Canonical RGB-D validation, Stray Scanner import, and a fixture-tested Record3D importer.
 - Detected or annotation-assisted chessboard calibration, optional static-view fusion, and measured-depth geometry.
-- SAM 3 instance assignment and SAM 3D mesh import with explicit quality rejection or fallback.
+- SAM 3 segmentation across static views, native-depth reliability gates, corroborated per-object reference selection, and SAM 3D import with held-out geometry validation or explicit fallback.
 - One shared scene description drives MuJoCo simulation, scene graphs, and executable Scenic samples.
 - Geometry profiling, original-input checks, held-out pose experiments, and physics replay verification.
 

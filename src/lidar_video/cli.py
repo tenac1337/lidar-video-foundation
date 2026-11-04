@@ -28,6 +28,8 @@ def main():
     p.add_argument("--mesh-policy", choices=["strict", "fallback"], default="strict")
     p.add_argument("--ambiguous-policy", choices=["error", "skip"], default="error")
     p.add_argument("--workers", type=int, choices=[1, 2], default=1)
+    p.add_argument("--candidate-frames", type=Path, required=True)
+    p.add_argument("--static-scene", action="store_true")
     p.add_argument("--samples", type=int, default=20)
     p = sub.add_parser("chess-reconstruct")
     p.add_argument("capture", type=Path)
@@ -101,6 +103,8 @@ def main():
                 reference_frame=args.reference_frame,
                 ambiguous_policy=args.ambiguous_policy,
                 workers=args.workers,
+                candidate_frames=json.loads(args.candidate_frames.read_text()),
+                static_scene=args.static_scene,
             )
         elif args.command == "chess-reconstruct":
             from lidar_video.reconstruction import reconstruct

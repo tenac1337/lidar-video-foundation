@@ -18,7 +18,7 @@ Several visible pieces had only 2.8–5.6 mm median recorded height in their ero
 
 Raw-file and transfer checks passed. Denser mesh sampling changed fused median errors by less than 0.2 mm. Rigid fitting improved held-out depth agreement for 8 of 10 eligible objects, but worsened two; four had inadequate split coverage. The fitted candidates were not accepted into the simulation.
 
-Next work: score depth reliability per instance/view, select better supported reference views, establish cross-view object associations, and refine pose with board-support and silhouette checks. Device-level smoothing, material response, registration and timing effects remain unresolved.
+The reliability fix implements per-instance/view depth gates, corroborated reference selection, and scale-preserving pose refinement with board support and held-out depth/silhouette checks. Replaying the gates on the saved 14 inference inputs blocks six (h8, d2, d8, g8, c7, f1); the other eight remain candidates, not accepted meshes. Additional-view SAM segmentation and a fresh A100 reconstruction are still required to evaluate replacement meshes on this recording. Device-level smoothing, material response, registration and timing effects remain unresolved.
 
 ## Limits
 

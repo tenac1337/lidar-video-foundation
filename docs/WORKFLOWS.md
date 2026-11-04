@@ -59,3 +59,31 @@ python scripts/summarize_geometry_profile.py /path/to/recording-result/geometry-
 ```
 
 These routines read saved meshes and depth, run local fits for diagnosis, and write reports. They do not accept fitted meshes into the simulation or alter the original inputs. The complete summarizer requires all ten original-PNG checks. Full-resolution real data and learned assets are deliberately external to this repository.
+
+## Reliability-gated learned reconstruction
+
+The A100 chess command now requires a JSON list of candidate frame indices and an explicit stationary-scene assertion:
+
+```sh
+lidar-video chess-reconstruct-gpu /path/to/capture.npz \
+  --calibration /path/to/board_calibration.json \
+  --candidate-frames /path/to/candidate_frames.json --static-scene \
+  --native-script scripts/colab_sam3d.py --ambiguous-policy skip \
+  --workers 1 --mesh-policy fallback --out runs/learned
+```
+
+Use at least two different camera viewpoints of the same unchanged arrangement. SAM 3 segments every candidate view. A chess square proposes an association; mutual reprojection must corroborate it. The best supported view supplies each object's SAM 3D input. Only trusted eroded foreground depth conditions the model; the full mask supplies its silhouette. No depth filling or extra mesh scaling is performed.
+
+Current engineering thresholds for upright tabletop pieces are at least 24 unique native core/foreground samples, 65% valid depth in both mask and core, and 70% of valid core samples between 15 and 200 mm above the board. These conservative policies can exclude small or partially visible pieces; they are not calibrated iPhone uncertainty estimates. Camera separation requires at least 5 mm translation or 1 degree rotation and different source-frame IDs when supplied.
+
+A mesh must pass every associated view: median distance <= one quarter square width, 90th-percentile distance <= half square width, silhouette IoU >= 0.5, and no silhouette loss above 0.05. Held-out median/p90 distances may not worsen by more than 1/2 mm respectively. Pose fitting trains only on the reference, preserves scale, and constrains the base to the board. Existing square-boundary and size checks still apply. A failed fit stays rejected. All views remain an engineering consistency check, not independent ground truth.
+
+The output retains `segmentation_audit.json`, raw per-frame masks, selected reference frames, per-object input depth, and validation evidence in the scene graph. If no candidate has corroborating reliable depth, the run stops before SAM 3D. Inspect/download those diagnostics even when no result scene exists. Missing objects do not establish empty squares.
+
+Replay the depth gates against an older single-reference run without using a GPU:
+
+```sh
+python scripts/audit_object_depth.py /path/to/learned-partial --out runs/depth-gate-replay.json
+```
+
+This replay neither generates replacement meshes nor accepts the old ones. The updated Colab templates automatically enumerate their prepared static frames and choose one worker on 40 GB A100 or two on 80 GB A100.
