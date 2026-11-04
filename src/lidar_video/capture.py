@@ -109,7 +109,9 @@ def normalize(data, min_confidence=1):
     ks = np.broadcast_to(data["K"], (n, 3, 3))
     target = ks[0].copy()
     v, u = np.indices((h, w), dtype=np.float32)
-    rgb, depths, levels = [], [], []
+    from lidar_video.object_evidence import sample_ids
+
+    rgb, depths, levels, sample_maps = [], [], [], []
     for i, k in enumerate(ks):
         mx = ((u - target[0, 2]) / target[0, 0] * k[0, 0] + k[0, 2]).astype(np.float32)
         my = ((v - target[1, 2]) / target[1, 1] * k[1, 1] + k[1, 2]).astype(np.float32)
@@ -127,7 +129,24 @@ def normalize(data, min_confidence=1):
             )
         )
         rgb.append(cv2.remap(data["rgb"][i], mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT))
-    out = dict(data, rgb=np.stack(rgb), depth=np.stack(depths), confidence=np.stack(levels), K=target)
+        mapped_ids = cv2.remap(
+            sample_ids(data, i).astype(np.float64),
+            mx,
+            my,
+            cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=-1,
+        ).astype(np.int64)
+        mapped_ids[depths[-1] <= 0] = -1
+        sample_maps.append(mapped_ids)
+    out = dict(
+        data,
+        rgb=np.stack(rgb),
+        depth=np.stack(depths),
+        confidence=np.stack(levels),
+        depth_sample_id=np.stack(sample_maps),
+        K=target,
+    )
     validate(out)
     return out
 

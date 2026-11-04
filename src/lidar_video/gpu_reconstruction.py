@@ -17,6 +17,7 @@ import numpy as np
 from PIL import Image
 
 from lidar_video.capture import load_capture, normalize, write_json
+from lidar_video.object_evidence import assess_depth, select_views
 from lidar_video.pipeline import prepare_upstream
 from lidar_video.reconstruction import calibrated_points, reconstruct
 
@@ -62,6 +63,10 @@ def assign_instances(data, cal, reference_frame, raw, ambiguous_policy="error"):
         if name in conflicts:
             excluded.append(dict(index=index, square=name, reason="ambiguous square assignment"))
             continue
+        quality, _, _ = assess_depth(data, cal, reference_frame, mask, points=points)
+        if not quality["passed"]:
+            excluded.append(dict(index=index, square=name, reason="unreliable object depth", quality=quality))
+            continue
         label = len(occupied) + 1
         occupied[name] = label
         labels[mask & (labels == 0)] = label
@@ -71,6 +76,8 @@ def assign_instances(data, cal, reference_frame, raw, ambiguous_policy="error"):
                 raw_index=index,
                 label=label,
                 score=float(detection["score"]),
+                depth_quality=quality,
+                frame=reference_frame,
                 source="upstream SAM 3 instance detector",
             )
         )
@@ -87,6 +94,62 @@ def assign_instances(data, cal, reference_frame, raw, ambiguous_policy="error"):
     )
 
 
+def plan_instances(data, calibration, detections_by_frame, ambiguous_policy="error"):
+    """CPU-testable planning stage; no GPU or model credentials are needed."""
+    candidates, masks, audits = [], {}, {}
+    for frame, raw in sorted(detections_by_frame.items()):
+        labels, detected, audit = assign_instances(data, calibration, frame, raw, ambiguous_policy)
+        masks[frame], audits[str(frame)] = labels, audit
+        for obj in detected:
+            mask = labels == obj["label"]
+            if not mask.any():
+                labels[mask] = 0
+                audit["accepted_instances"] -= 1
+                audit["excluded"].append(
+                    dict(
+                        index=obj["raw_index"],
+                        square=obj["square"],
+                        reason="mask empty after overlap removal",
+                    )
+                )
+                continue
+            quality, trusted, cloud = assess_depth(data, calibration, frame, mask)
+            if not quality["passed"]:
+                # Resolve pixel overlap before the final quality decision.
+                audit["excluded"].append(
+                    dict(
+                        index=obj["raw_index"],
+                        square=obj["square"],
+                        reason="unreliable depth after overlap removal",
+                        quality=quality,
+                    )
+                )
+                labels[mask] = 0
+                audit["accepted_instances"] -= 1
+                continue
+            candidates.append(
+                dict(
+                    square=obj["square"],
+                    frame=frame,
+                    label=obj["label"],
+                    mask=mask,
+                    trusted=trusted,
+                    cloud=cloud,
+                    quality=quality,
+                )
+            )
+    selected, rejected = select_views(candidates, data, calibration)
+    return (
+        masks,
+        selected,
+        dict(
+            frames=audits,
+            rejected_associations=rejected,
+            selected_reference_frames={name: item["reference"]["frame"] for name, item in selected.items()},
+        ),
+    )
+
+
 def run_gpu(
     capture,
     calibration,
@@ -98,6 +161,8 @@ def run_gpu(
     reference_frame=0,
     ambiguous_policy="error",
     workers=1,
+    candidate_frames=None,
+    static_scene=False,
 ):
     import torch
     from roboskills.tools.sam3.sam3 import Sam
@@ -117,6 +182,11 @@ def run_gpu(
     data = normalize(load_capture(capture))
     if type(reference_frame) is not int or not 0 <= reference_frame < len(data["depth"]):
         raise ValueError("Reference frame outside capture")
+    frames = list(candidate_frames) if candidate_frames is not None else [reference_frame]
+    if not static_scene or len(frames) < 2 or len(set(frames)) != len(frames):
+        raise ValueError("Learned reconstruction requires --static-scene and at least two candidate frames")
+    if any(type(f) is not int or not 0 <= f < len(data["depth"]) for f in frames):
+        raise ValueError("Candidate frame outside capture")
     if calibration is None:
         from lidar_video.board_calibration import calibrate
 
@@ -128,34 +198,74 @@ def run_gpu(
     upstream = prepare_upstream(data, out / "upstream", reference_frame=reference_frame)
     masks_dir = out / "masks"
     masks_dir.mkdir()
+    raw_by_frame = {}
     sam = Sam()
     try:
-        detections = sam.detect(data["rgb"][reference_frame], ["chess piece"])
+        for frame in frames:
+            raw = sam.detect(data["rgb"][frame], ["chess piece"]).get("chess piece", [])
+            raw_by_frame[frame] = raw
+            folder = out / "segmentation" / f"{frame:05d}"
+            folder.mkdir(parents=True)
+            np.savez_compressed(folder / "raw_masks.npz", **{str(i): d["mask"] for i, d in enumerate(raw)})
+            write_json(folder / "detections.json", [{k: v for k, v in d.items() if k != "mask"} for d in raw])
     finally:
         sam.close()
-    raw = detections.get("chess piece", [])
-    np.savez_compressed(out / "sam3_raw_masks.npz", **{str(i): d["mask"] for i, d in enumerate(raw)})
-    write_json(out / "sam3_raw_detections.json", [{k: v for k, v in d.items() if k != "mask"} for d in raw])
+    masks, selected, audit = plan_instances(data, cal, raw_by_frame, ambiguous_policy)
+    write_json(out / "segmentation_audit.json", audit)
     write_json(
         out / "status.json",
         dict(
             gpu=torch.cuda.get_device_name(0),
             stages={"sam3": "passed"},
-            raw_instances=len(raw),
-            reference_frame=reference_frame,
+            candidate_frames=frames,
+            reliable_objects=len(selected),
         ),
     )
-    labels, detected, audit = assign_instances(data, cal, reference_frame, raw, ambiguous_policy)
-    write_json(out / "segmentation_audit.json", audit)
-    if not detected:
-        raise ValueError("SAM 3 has no unambiguous pieces with sufficient registered depth")
-    Image.fromarray(labels).save(masks_dir / f"{reference_frame:05d}.png")
-    write_json(masks_dir / "objects.json", detected)
-    occupied = {item["square"]: item["label"] for item in detected}
+    if not selected:
+        raise ValueError(
+            "No objects have reliable native depth and corroborating segmented views; inspect segmentation_audit.json"
+        )
+    trusted_masks_dir = out / "trusted_masks"
+    trusted_masks_dir.mkdir()
+    for frame in frames:
+        Image.fromarray(masks[frame]).save(masks_dir / f"{frame:05d}.png")
+        trusted_labels = np.zeros_like(masks[frame])
+        for item in selected.values():
+            for observation in item["observations"]:
+                if observation["frame"] == frame:
+                    trusted_labels[observation["trusted"]] = observation["label"]
+        Image.fromarray(trusted_labels).save(trusted_masks_dir / f"{frame:05d}.png")
+    write_json(
+        masks_dir / "objects.json",
+        [
+            dict(
+                square=name,
+                frame=item["reference"]["frame"],
+                label=item["reference"]["label"],
+                depth_quality=item["reference"]["quality"],
+            )
+            for name, item in selected.items()
+        ],
+    )
     manifest = dict(schema="roboskills-chess-meshes-v1", objects={})
-    status = dict(gpu=torch.cuda.get_device_name(0), stages={"sam3": "passed"})
+    status = dict(
+        gpu=torch.cuda.get_device_name(0),
+        stages={"sam3": "passed"},
+        candidate_frames=frames,
+        reliable_objects=len(selected),
+    )
 
-    def infer_one(name, label):
+    def infer_one(name, item):
+        observation = item["reference"]
+        frame, label = observation["frame"], observation["label"]
+        # The full mask still describes the silhouette; only trustworthy native-depth
+        # evidence may condition its geometry. No depth filling or metric rescaling.
+        with np.load(upstream / "depth/depth.npz", allow_pickle=False) as archive:
+            depth_input = {key: archive[key] for key in archive.files}
+        depth_input["valid"][frame] &= observation["trusted"]
+        depth_input["depth"][frame] = np.where(depth_input["valid"][frame], depth_input["depth"][frame], 0)
+        depth_file = out / f"depth-{name}.npz"
+        np.savez_compressed(depth_file, **depth_input)
         shape = out / "shapes" / name
         log = out / f"sam3d-{name}.log"
         with log.open("w") as handle:
@@ -169,13 +279,13 @@ def run_gpu(
                     "--masks",
                     str(masks_dir),
                     "--depth",
-                    str(upstream / "depth/depth.npz"),
+                    str(depth_file),
                     "--out",
                     str(shape),
                     "--label",
                     str(label),
                     "--frame",
-                    str(reference_frame),
+                    str(frame),
                     "--samples",
                     str(pose_samples),
                 ],
@@ -196,7 +306,7 @@ def run_gpu(
     status.update(segmentation=audit, workers=workers, failures={})
     write_json(out / "status.json", status)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(infer_one, name, label): name for name, label in occupied.items()}
+        futures = {pool.submit(infer_one, name, item): name for name, item in selected.items()}
         for future in as_completed(futures):
             name = futures[future]
             try:
@@ -206,19 +316,30 @@ def run_gpu(
                 status["stages"][f"sam3d-{name}"] = "failed"
             else:
                 manifest["objects"][name] = dict(
-                    mesh=f"shapes/{name}/mesh.ply", pose=f"shapes/{name}/pose.json", frame=reference_frame
+                    mesh=f"shapes/{name}/mesh.ply",
+                    pose=f"shapes/{name}/pose.json",
+                    frame=selected[name]["reference"]["frame"],
+                    validation="instance-multiview-v1",
+                    static_scene=True,
+                    observations=[
+                        dict(frame=o["frame"], mask=f"masks/{o['frame']:05d}.png", label=o["label"])
+                        for o in selected[name]["observations"]
+                    ],
                 )
                 status["stages"][f"sam3d-{name}"] = "passed"
             write_json(out / "status.json", status)
             write_json(out / "meshes.json", manifest)
     if status["failures"] and mesh_policy == "strict":
         raise RuntimeError("SAM 3D failures; inspect status.json")
-    # One selected frame: masks and learned geometry describe one observed placement.
+    # Only corroborated instances supply geometry; missing nodes are not verified empty cells.
     return reconstruct(
         out / "capture.npz",
         out / "calibration.json",
         out / "result",
-        masks=masks_dir,
+        masks=trusted_masks_dir,
+        static_scene=True,
+        fusion_frames=frames,
+        min_height=0.015,
         mesh_manifest=out / "meshes.json",
         mesh_policy=mesh_policy,
         samples=samples,

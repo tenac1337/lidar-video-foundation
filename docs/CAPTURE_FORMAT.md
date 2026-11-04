@@ -16,7 +16,7 @@ To preserve source data, import into a new file. Record app version, camera sele
 
 ## Normalization
 
-Per-frame K is mapped to the first frame's pixel grid using pinhole ray remapping. RGB uses bilinear interpolation; depth/confidence use nearest neighbors and invalid borders. Poses and times remain unchanged. This assumes RGB and depth are already spatially registered. Separate sensor extrinsics/distortion need a prior registration stage and cannot be ignored.
+Per-frame K is mapped to the first frame's pixel grid using pinhole ray remapping. RGB uses bilinear interpolation; depth/confidence use nearest neighbors and invalid borders. Poses and times remain unchanged. Optional integer `depth_sample_id[N,H,W]` maps each stored pixel to its original native-depth sample (row-major index; -1 for invalid borders). Normalization carries this map through the identical nearest-neighbor transform. `native_depth_shape=[height,width]` declares the original sensor grid. Without explicit IDs, legacy upsampled inputs must follow this project’s origin-aligned mapping `native_pixel=round(stored_pixel/scale)`, clipped at the native boundary; other resamplers must supply IDs. Repeated RGB-sized pixels never count as independent sensor samples. This assumes RGB and depth are already spatially registered. Separate sensor extrinsics/distortion need a prior registration stage and cannot be ignored.
 
 ## Record3D reader scope
 
