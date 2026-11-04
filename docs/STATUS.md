@@ -18,7 +18,13 @@ Several visible pieces had only 2.8–5.6 mm median recorded height in their ero
 
 Raw-file and transfer checks passed. Denser mesh sampling changed fused median errors by less than 0.2 mm. Rigid fitting improved held-out depth agreement for 8 of 10 eligible objects, but worsened two; four had inadequate split coverage. The fitted candidates were not accepted into the simulation.
 
-The reliability fix implements per-instance/view depth gates, corroborated reference selection, and scale-preserving pose refinement with board support and held-out depth/silhouette checks. Replaying the gates on the saved 14 inference inputs blocks six (h8, d2, d8, g8, c7, f1); the other eight remain candidates, not accepted meshes. Additional-view SAM segmentation and a fresh A100 reconstruction are still required to evaluate replacement meshes on this recording. Device-level smoothing, material response, registration and timing effects remain unresolved.
+The reliability fix implements per-instance/view depth gates, corroborated reference selection, and scale-preserving pose refinement with board support and held-out depth/silhouette checks. The initial depth-gate replay on the saved 14 inference inputs blocked six (h8, d2, d8, g8, c7, f1); the other eight were candidates, not accepted meshes.
+
+A fresh A100 80 GB run segmented three views (37, 37 and 43 detections), selected e8 from frame 2, and completed its SAM 3D job. The mesh failed held-out validation: 25.24 mm median depth error and 0.009 silhouette IoU. No learned mesh was accepted.
+
+That run also exposed a fallback bug: one instance was split into two square-based objects. The follow-up preserves instance identity in fallback and requires at least 90% of trusted native samples to fall within the assigned square. Only 57.86% of e8’s frame-2 samples did.
+
+Both local replay and a second fresh A100 segmentation run with this gate select no objects. The final GPU audit matches replay decisions and counts: per-view candidate counts are 1, 0 and 0. The pipeline reports `abstained`, launches zero SAM 3D jobs and exports no new scene. The earlier two-object fallback is diagnostic evidence of the fixed bug, not a corrected result. The local test suite now has 78 passing tests. Device-level smoothing, material response, registration and timing effects remain unresolved.
 
 ## Limits
 

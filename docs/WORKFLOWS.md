@@ -74,7 +74,7 @@ lidar-video chess-reconstruct-gpu /path/to/capture.npz \
 
 Use at least two different camera viewpoints of the same unchanged arrangement. SAM 3 segments every candidate view. A chess square proposes an association; mutual reprojection must corroborate it. The best supported view supplies each object's SAM 3D input. Only trusted eroded foreground depth conditions the model; the full mask supplies its silhouette. No depth filling or extra mesh scaling is performed.
 
-Current engineering thresholds for upright tabletop pieces are at least 24 unique native core/foreground samples, 65% valid depth in both mask and core, and 70% of valid core samples between 15 and 200 mm above the board. These conservative policies can exclude small or partially visible pieces; they are not calibrated iPhone uncertainty estimates. Camera separation requires at least 5 mm translation or 1 degree rotation and different source-frame IDs when supplied.
+Current engineering thresholds for upright tabletop pieces are at least 24 unique native core/foreground samples, 65% valid depth in both mask and core, and 70% of valid core samples between 15 and 200 mm above the board. At least 90% of trusted native foreground samples must also lie inside the proposed square, consistent with the existing one-piece-per-square geometry contract. These conservative policies can exclude small or partially visible pieces; they are not calibrated iPhone uncertainty estimates. Camera separation requires at least 5 mm translation or 1 degree rotation and different source-frame IDs when supplied.
 
 A mesh must pass every associated view: median distance <= one quarter square width, 90th-percentile distance <= half square width, silhouette IoU >= 0.5, and no silhouette loss above 0.05. Held-out median/p90 distances may not worsen by more than 1/2 mm respectively. Pose fitting trains only on the reference, preserves scale, and constrains the base to the board. Existing square-boundary and size checks still apply. A failed fit stays rejected. All views remain an engineering consistency check, not independent ground truth.
 
@@ -87,3 +87,5 @@ python scripts/audit_object_depth.py /path/to/learned-partial --out runs/depth-g
 ```
 
 This replay neither generates replacement meshes nor accepts the old ones. The updated Colab templates automatically enumerate their prepared static frames and choose one worker on 40 GB A100 or two on 80 GB A100.
+
+New GPU fallback masks include `trusted_masks/instances.json` (`chess-instance-assignments-v1`), mapping each frame’s nonzero labels to square identities. The collector retains that identity instead of splitting an instance into neighboring square objects. Contradictory cross-square geometry still fails the existing bounds check; it is not silently clipped. Legacy masks without this sidecar retain square-based collection.

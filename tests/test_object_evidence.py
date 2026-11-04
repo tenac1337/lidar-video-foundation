@@ -100,7 +100,7 @@ def test_same_square_without_matching_silhouette_is_not_associated():
     for f, m in enumerate(masks):
         data["depth"][f][m] = 1
         masks[f] = cv2.erode(m.astype(np.uint8), np.ones((11, 11), np.uint8)).astype(bool)
-    masks[2] = np.roll(masks[2], 12, axis=0)
+    masks[2] = np.roll(masks[2], 8, axis=0)
     for f, m in enumerate(masks):
         data["depth"][f][m] = 0.94
     raw = {f: [dict(mask=m, score=0.9)] for f, m in enumerate(masks)}
@@ -306,6 +306,25 @@ def test_gpu_handoff_uses_selected_frame_and_only_trusted_depth(tmp_path, monkey
     assert manifest["validation"] == "instance-multiview-v1"
     assert result["kwargs"]["masks"] == out / "trusted_masks"
     assert not np.asarray(Image.open(out / "trusted_masks/00000.png")).any()
+    assignments = json.loads((out / "trusted_masks/instances.json").read_text())
+    assert assignments["frames"]["0"] == {}
+    assert assignments["frames"]["1"] == {"1": "e5"}
+
+    data["depth"][:] = 1  # Board-level depth must stop before any additional model job.
+    np.savez_compressed(tmp_path / "capture.npz", **data)
+    with pytest.raises(ValueError, match="No objects have reliable native depth"):
+        gpu.run_gpu(
+            tmp_path / "capture.npz",
+            tmp_path / "calibration.json",
+            tmp_path / "abstained",
+            tmp_path / "native.py",
+            static_scene=True,
+            candidate_frames=[0, 1, 2],
+        )
+    assert len(calls) == 1
+    status = json.loads((tmp_path / "abstained/status.json").read_text())
+    assert status["status"] == "abstained"
+    assert not (tmp_path / "abstained/meshes.json").exists()
 
 
 def test_integration_preserves_evidence_and_remaps_normalized_masks(tmp_path, monkeypatch):
@@ -364,3 +383,37 @@ def test_integration_preserves_evidence_and_remaps_normalized_masks(tmp_path, mo
         np.testing.assert_array_equal(
             np.asarray(Image.open(observation["mask"])) > 0, masks[observation["frame"]]
         )
+
+
+def test_cross_square_native_depth_fails_before_inference():
+    data, cal, masks = fixture()
+    data["K"][0, 2] += 12
+    quality, _, _ = assess_depth(data, cal, 0, masks[0], square="e5")
+    assert not quality["passed"]
+    assert quality["native_square_fraction"] < 0.9
+    assert "foreground depth spans multiple squares" in quality["reasons"]
+    _, selected, _ = plan_instances(data, cal, {0: [dict(mask=masks[0], score=0.9)]}, "skip")
+    assert not selected
+
+
+def test_associated_instance_is_not_split_into_phantom_neighbor(tmp_path):
+    import json
+
+    from lidar_video.reconstruction import check_mesh_bounds, collect_squares, completed_hull
+
+    data, cal, masks = fixture()
+    data["K"][0, 2] += 12
+    Image.fromarray(masks[0].astype(np.uint16)).save(tmp_path / "00000.png")
+    (tmp_path / "instances.json").write_text(
+        json.dumps(dict(schema="chess-instance-assignments-v1", frames={"0": {"1": "e5"}}))
+    )
+    points, _, _ = collect_squares(data, cal, [0], tmp_path)
+    assert len(points[36]) == 400  # All depth remains associated with the same e5 instance.
+    assert len(points[35]) == 0  # No invented d5 object from the cross-square fragment.
+    with pytest.raises(MeshQualityError, match="crosses square boundary"):
+        check_mesh_bounds(completed_hull(points[36]), np.array([0.0, 0.0]), np.array([0.05, 0.05]))
+    (tmp_path / "instances.json").write_text(
+        json.dumps(dict(schema="chess-instance-assignments-v1", frames={"0": {}}))
+    )
+    with pytest.raises(ValueError, match="requires an instance assignment"):
+        collect_squares(data, cal, [0], tmp_path)

@@ -12,7 +12,7 @@ This is the core implementation for an iPhone LiDAR/video reconstruction project
 - One shared scene description drives MuJoCo simulation, scene graphs, and executable Scenic samples.
 - Geometry profiling, original-input checks, held-out pose experiments, and physics replay verification.
 
-**Detailed real-piece reconstruction remains unresolved.** The real iPhone A100 run generated 14 meshes; none passed every geometry check. Its simulation used 30 coarse depth completions. Profiling found suspect foreground depth and inconsistent placement across views. The current fallback is a prototype, not validated physical geometry. See [status and limitations](docs/STATUS.md).
+**Detailed real-piece reconstruction remains unresolved.** The real iPhone A100 run generated 14 meshes; none passed every geometry check. Its simulation used 30 coarse depth completions. Profiling found suspect foreground depth and inconsistent placement across views. A subsequent three-view A100 run generated one candidate, which also failed held-out checks. Its fallback exposed cross-square instance splitting; the follow-up preserves identity and rejects mixed-square depth before inference. The current fallback is a prototype, not validated physical geometry. See [status and limitations](docs/STATUS.md).
 
 ## Install
 
@@ -75,4 +75,4 @@ ruff check src scripts tests
 
 See [the architecture](docs/ARCHITECTURE.md) for module responsibilities and [workflow commands](docs/WORKFLOWS.md) for reconstruction, profiling and verification. Private captures, generated scenes, learned meshes, model weights, runtime logs and executed notebooks stay outside Git. `.gitignore` includes safeguards; review staged files before committing.
 
-Upstream attribution and licensing notes are in [NOTICE.md](NOTICE.md). No project-wide open-source license has been selected; this repository is intended to remain private.
+Upstream attribution and licensing notes are in [NOTICE.md](NOTICE.md). No project-wide open-source license has been selected.
