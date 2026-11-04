@@ -75,4 +75,4 @@ ruff check src scripts tests
 
 See [the architecture](docs/ARCHITECTURE.md) for module responsibilities and [workflow commands](docs/WORKFLOWS.md) for reconstruction, profiling and verification. Private captures, generated scenes, learned meshes, model weights, runtime logs and executed notebooks stay outside Git. `.gitignore` includes safeguards; review staged files before committing.
 
-Upstream attribution and licensing notes are in [NOTICE.md](NOTICE.md). No project-wide open-source license has been selected; this repository is intended to remain private.
+Upstream attribution and licensing notes are in [NOTICE.md](NOTICE.md). No project-wide open-source license has been selected.
