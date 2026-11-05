@@ -79,7 +79,10 @@ def sample_scenic(path, graph, out, count=20, seed=7):
     samples, iterations = [], []
     for i in range(count):
         scene, attempts = scenario.generate(maxIterations=2000)
-        by_id = {obj.objectId: obj for obj in scene.objects}
+        object_ids = [obj.objectId for obj in scene.objects]
+        if len(set(object_ids)) != len(object_ids):
+            raise ValueError("Scenic object IDs must be unique; duplicate objects cannot be discarded")
+        by_id = dict(zip(object_ids, scene.objects))
         expected = {n["id"] for n in graph["nodes"] if n["kind"] in ("support", "object")}
         if set(by_id) != expected:
             raise ValueError("Scenic object IDs do not match graph")

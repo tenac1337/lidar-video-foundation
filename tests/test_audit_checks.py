@@ -101,6 +101,27 @@ def test_bad_scenic_program_is_recompiled_and_rejected(scene, tmp_path):
     assert (tmp_path / "audit/scenic_compile.log").stat().st_size > 0
 
 
+def test_duplicate_raw_scenic_object_cannot_disappear_from_export(scene, tmp_path):
+    from lidar_video.scenic_export import sample_scenic
+
+    folder, graph, case = scene
+    program = folder / "scenario.scenic"
+    # The duplicate comes first, so a lossy dict comprehension would hide it
+    # behind the valid original object and still produce a plausible graph.
+    ghost = (
+        "ghost = new Object at (-0.15, -0.15, 0.03), with width 0.01, "
+        "with length 0.01, with height 0.02, with requireVisible False, with objectId 'left'\n"
+    )
+    program.write_text(ghost + program.read_text())
+    target = tmp_path / "duplicate_samples.json"
+    with pytest.raises(ValueError, match="IDs must be unique"):
+        sample_scenic(program, graph, target, count=1)
+    assert not target.exists()
+    result = run_checks(case, tmp_path, tmp_path / "audit")
+    assert result["exports"]["status"] == "fail"
+    assert "IDs must be unique" in (tmp_path / "audit/scenic_compile.log").read_text()
+
+
 @pytest.mark.parametrize("entries", [{}, {"f8": {}}, {"f8": {"validation": "legacy_square_cloud"}}])
 def test_weak_or_incomplete_mesh_contract_is_rejected(entries, tmp_path):
     (tmp_path / "meshes.json").write_text(
