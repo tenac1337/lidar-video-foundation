@@ -141,31 +141,72 @@ def validate_and_align(mesh, entry, root, data, calibration):
             for v, old in zip(views, original_views)
         )
 
+    attempts = []
+
+    def record(method, matrix, views, success=True):
+        accepted = bool(success and acceptable(views))
+        attempts.append(
+            dict(
+                method=method,
+                matrix=matrix.tolist(),
+                views=views,
+                optimizer_success=bool(success),
+                accepted=accepted,
+            )
+        )
+        return accepted
+
     method, chosen, views = "support_snap", baseline, baseline_views
-    if abs(mesh.bounds[0, 2]) > 0.01 or not acceptable(views):
+    # A large initial base offset alone must not trigger a destructive rotation
+    # when the simple support correction already passes every unchanged gate.
+    if not record(method, chosen, views):
         training = next(o["cloud"] for o in evidence if o["frame"] == reference)
         training = training[np.linspace(0, len(training) - 1, min(1200, len(training)), dtype=int)]
 
-        def residual(parameters):
+        def depth_residual(parameters):
             matrix = transform(parameters)
             return tree.query((training - matrix[:3, 3]) @ matrix[:3, :3])[0]
 
-        bounds = [calibration["square_size_m"] / 2] * 2 + [np.deg2rad(30)] * 3
-        fit = least_squares(
-            residual,
-            np.zeros(5),
-            bounds=(-np.asarray(bounds), bounds),
+        xy_bound = calibration["square_size_m"] / 2
+        translation_fit = least_squares(
+            lambda xy: depth_residual(np.r_[xy, np.zeros(3)]),
+            np.zeros(2),
+            bounds=(-np.full(2, xy_bound), np.full(2, xy_bound)),
             loss="soft_l1",
             f_scale=0.004,
             max_nfev=100,
         )
-        chosen = transform(fit.x)
+        parameters = np.r_[translation_fit.x, np.zeros(3)]
+        method = "reference_only_translation_with_held_out_validation"
+        chosen = transform(parameters)
         views = evaluate(chosen)
-        if not fit.success or not acceptable(views):
-            raise MeshQualityError(
-                f"Support-constrained fit failed per-view depth/silhouette validation: {views}"
+        if not record(method, chosen, views, translation_fit.success):
+            # The original learned orientation is a prior, not a measured truth.
+            # Express angular change as RMS surface displacement so a noisy small
+            # patch cannot freely tilt the entire piece to fit the training view.
+            radius = float(np.sqrt(np.mean(np.sum((hull - center) ** 2, axis=1))))
+
+            def residual(parameters):
+                rotation_prior = np.tile(radius * parameters[2:] / np.sqrt(3), len(training))
+                return np.r_[depth_residual(parameters), rotation_prior]
+
+            bounds = np.array([xy_bound] * 2 + [np.deg2rad(30)] * 3)
+            fit = least_squares(
+                residual, parameters, bounds=(-bounds, bounds), loss="soft_l1", f_scale=0.004, max_nfev=100
             )
-        method = "reference_only_rigid_fit_with_held_out_validation"
+            method = "reference_only_regularized_rigid_fit_with_held_out_validation"
+            chosen = transform(fit.x)
+            views = evaluate(chosen)
+            if not record(method, chosen, views, fit.success):
+                raise MeshQualityError(
+                    f"Support-constrained fit failed per-view depth/silhouette validation: {views}",
+                    evidence=dict(
+                        original_views=original_views,
+                        attempts=attempts,
+                        reference_frame=reference,
+                        scale_reapplied=False,
+                    ),
+                )
     mesh.apply_transform(chosen)
     return mesh, dict(
         validation="instance-multiview-v1",
@@ -173,6 +214,7 @@ def validate_and_align(mesh, entry, root, data, calibration):
         scale_reapplied=False,
         board_refinement=chosen.tolist(),
         original_views=original_views,
+        attempts=attempts,
         views=views,
         association=association,
         rigid_translation_z_m=float(chosen[2, 3]),
