@@ -17,6 +17,7 @@ import numpy as np
 from PIL import Image
 
 from lidar_video.capture import load_capture, normalize, write_json
+from lidar_video.model_depth import object_conditioning_depth
 from lidar_video.object_evidence import assess_depth, select_views
 from lidar_video.pipeline import prepare_upstream
 from lidar_video.reconstruction import calibrated_points, reconstruct
@@ -265,12 +266,12 @@ def run_gpu(
     def infer_one(name, item):
         observation = item["reference"]
         frame, label = observation["frame"], observation["label"]
-        # The full mask still describes the silhouette; only trustworthy native-depth
-        # evidence may condition its geometry. No depth filling or metric rescaling.
+        # Keep measured scene context for upstream scene-scale normalization;
+        # only the target instance's depth is restricted to its trusted core.
         with np.load(upstream / "depth/depth.npz", allow_pickle=False) as archive:
-            depth_input = {key: archive[key] for key in archive.files}
-        depth_input["valid"][frame] &= observation["trusted"]
-        depth_input["depth"][frame] = np.where(depth_input["valid"][frame], depth_input["depth"][frame], 0)
+            depth_input = object_conditioning_depth(
+                archive, frame, observation["mask"], observation["trusted"]
+            )
         depth_file = out / f"depth-{name}.npz"
         np.savez_compressed(depth_file, **depth_input)
         shape = out / "shapes" / name

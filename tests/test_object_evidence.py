@@ -230,7 +230,7 @@ def test_new_manifest_reaches_shared_graph_and_scenic(tmp_path):
     assert evidence["scale_reapplied"] is False
 
 
-def test_gpu_handoff_uses_selected_frame_and_only_trusted_depth(tmp_path, monkeypatch):
+def test_gpu_handoff_keeps_scene_context_and_only_trusted_target_depth(tmp_path, monkeypatch):
     import json
     import sys
     from pathlib import Path
@@ -275,8 +275,15 @@ def test_gpu_handoff_uses_selected_frame_and_only_trusted_depth(tmp_path, monkey
             with np.load(argv[argv.index("--depth") + 1]) as archive:
                 valid = archive["valid"][frame]
                 assert np.all(archive["depth"][frame][~valid] == 0)
-                assert 24 <= valid.sum() < masks[frame].sum()
-                assert not np.any(valid & ~masks[frame])
+                assert 24 <= (valid & masks[frame]).sum() < masks[frame].sum()
+                trusted = np.asarray(Image.open(tmp_path / "run/trusted_masks" / f"{frame:05d}.png")) > 0
+                np.testing.assert_array_equal(valid & masks[frame], trusted)
+                with np.load(tmp_path / "run/upstream/depth/depth.npz") as source:
+                    np.testing.assert_array_equal(valid[~masks[frame]], source["valid"][frame][~masks[frame]])
+                    np.testing.assert_array_equal(
+                        archive["depth"][frame][valid], source["depth"][frame][valid]
+                    )
+                assert (valid & ~masks[frame]).any()
 
         def wait(self, **kwargs):
             return 0
