@@ -40,6 +40,16 @@ Both fresh meshes still fail unchanged validation. b8's final silhouette IoU is 
 
 The complete result archive and corrected capture hashes were checked locally. Raw data and artifacts remain outside Git. This run confirms the corrected adapter executes on A100; it does not isolate whether the remaining mismatch comes from learned shape, support assumptions, sensor depth or calibration.
 
+## SAM 3D scene-context correction
+
+A runtime source/configuration trace found an input-contract mismatch: per-object depth preparation discarded the entire scene outside the trusted target core, while the shipped `ObjectCentricSSI(use_scene_scale=True)` computes scale from all valid scene points. The correction preserves valid measured context outside the target mask and the exact same trusted depth inside it. It does not fill missing depth or change native rays, mesh scaling, reference selection, fitting or validation gates.
+
+A controlled A100-SXM4-80GB comparison used the same frozen inputs and seeds 0–7 for f8 and b8, retaining all 16 new meshes. Both jobs and scoring completed; seed 0 repeated exactly. After unchanged support fitting, held-out depth distance improved in all eight matched seeds for each piece, with median paired reductions of 5.539 mm and 5.509 mm. Raw f8 depth and silhouette agreement worsened on the median paired comparison, so this is not an improvement at every stage.
+
+Both automatically selected meshes remain rejected. f8 selects seed 7: held-out median depth distance 3.765 mm, IoU 0.446. b8 selects seed 0: mean held-out median distance 4.805 mm, worst IoU 0.438. Both fail the unchanged 0.50 silhouette IoU floor. One unselected f8 seed passes individual geometry checks; it is not promoted based on held-out results. No new accepted learned-mesh simulation, scene graph or Scenic export is produced.
+
+The local suite has 95 passing tests. The exact production helper was used for GPU input preparation, and target depth/calibration/native sample metadata equality was asserted. The remaining issue is multi-view shape/silhouette consistency and reference-only candidate ranking; independent physical ground truth remains unavailable.
+
 ## Limits
 
 - Record3D import is fixture-tested, not validated against a real Record3D export.
