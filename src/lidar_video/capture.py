@@ -14,6 +14,8 @@ import numpy as np
 from PIL import Image
 from scipy.spatial.transform import Rotation
 
+from lidar_video.native_depth import native_intrinsics, native_shape, sample_ids
+
 REQUIRED = {"rgb", "depth", "confidence", "K", "world_from_camera", "rgb_time", "depth_time"}
 
 
@@ -47,6 +49,12 @@ def validate(data, max_skew=0.02):
         raise ValueError("Invalid pinhole intrinsics")
     if not np.allclose(ks[:, 0, 1], 0) or not np.allclose(ks[:, 1, 0], 0):
         raise ValueError("Skewed intrinsics are not supported")
+    for frame in range(n):
+        ids = sample_ids(data, frame)
+        usable = np.isfinite(depth[frame]) & (depth[frame] > 0) & (confidence[frame] >= 1)
+        if np.any(usable & (ids < 0)):
+            raise ValueError("Usable depth has no native sample ID")
+    native_intrinsics(data)
     transforms = data["world_from_camera"]
     if transforms.shape != (n, 4, 4) or not np.isfinite(transforms).all():
         raise ValueError("world_from_camera must be finite (N,4,4)")
@@ -109,7 +117,6 @@ def normalize(data, min_confidence=1):
     ks = np.broadcast_to(data["K"], (n, 3, 3))
     target = ks[0].copy()
     v, u = np.indices((h, w), dtype=np.float32)
-    from lidar_video.object_evidence import sample_ids
 
     rgb, depths, levels, sample_maps = [], [], [], []
     for i, k in enumerate(ks):
@@ -145,6 +152,8 @@ def normalize(data, min_confidence=1):
         depth=np.stack(depths),
         confidence=np.stack(levels),
         depth_sample_id=np.stack(sample_maps),
+        native_K=native_intrinsics(data).copy(),
+        native_depth_shape=np.array(native_shape(data)),
         K=target,
     )
     validate(out)

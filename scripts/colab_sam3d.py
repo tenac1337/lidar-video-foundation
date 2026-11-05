@@ -132,6 +132,7 @@ def infer(args):
     run(
         [
             "/opt/venv/bin/python",
+            Path(__file__).with_name("sam3d_native_rays.py"),
             REPO / "src/roboskills/tools/sam3d/sam3d.py",
             args.video,
             args.masks,

@@ -13,6 +13,7 @@ from scipy.optimize import linear_sum_assignment
 
 from lidar_video.capture import load_capture, normalize, validate, write_json
 from lidar_video.geometry import export_ply, scene_graph
+from lidar_video.native_depth import native_intrinsics, native_shape, sample_ids
 from lidar_video.scenic_export import export_scenic, sample_scenic
 from lidar_video.simulation import simulate
 from lidar_video.synthetic import encode_video, generate
@@ -63,7 +64,14 @@ def prepare_upstream(data, out, reference_frame=0):
     z = data["depth"].astype(np.float32)
     valid = np.isfinite(z) & (z > 0) & (data["confidence"] >= 1)
     np.savez_compressed(
-        out / "depth/depth.npz", depth=np.where(valid, z, 0), valid=valid, K=data["K"], frames=np.arange(n)
+        out / "depth/depth.npz",
+        depth=np.where(valid, z, 0),
+        valid=valid,
+        K=data["K"],
+        frames=np.arange(n),
+        native_K=native_intrinsics(data),
+        native_depth_shape=np.array(native_shape(data)),
+        depth_sample_id=np.stack([sample_ids(data, f) for f in range(n)]),
     )
     np.savez_compressed(
         out / "input/sensor_metadata.npz",

@@ -8,37 +8,13 @@ import chess
 import cv2
 import numpy as np
 
+from lidar_video.native_depth import sample_ids
+
 MIN_NATIVE_CORE = 24
 MIN_VALID_FRACTION = 0.65
 MIN_FOREGROUND_FRACTION = 0.70
 MIN_HEIGHT_M = 0.015
 MIN_SQUARE_FRACTION = 0.90
-
-
-def sample_ids(data, frame):
-    """Preserve sensor sample identity through the project's nearest-neighbor mapping.
-
-    Legacy native_depth_shape means the project's origin-aligned mapping:
-    native pixel = round(model pixel / scale). Other resamplers must supply IDs.
-    """
-    h, w = data["depth"].shape[1:]
-    nh, nw = map(int, data.get("native_depth_shape", (h, w)))
-    if nh <= 0 or nw <= 0:
-        raise ValueError("Invalid native_depth_shape")
-    if "depth_sample_id" in data:
-        ids = np.asarray(data["depth_sample_id"])
-        if ids.shape != data["depth"].shape or ids.dtype.kind not in "iu":
-            raise ValueError("depth_sample_id must be integer (N,H,W)")
-        if np.any(ids[frame] < -1) or np.any(ids[frame] >= nh * nw):
-            raise ValueError("depth_sample_id must be -1 or a native-grid index")
-        return ids[frame]
-    nh, nw = map(int, data.get("native_depth_shape", (h, w)))
-    if nh <= 0 or nw <= 0 or nh > h or nw > w:
-        raise ValueError("Invalid native_depth_shape; supply explicit depth_sample_id for other mappings")
-    y, x = np.indices((h, w))
-    return (np.clip(np.rint(y * nh / h), 0, nh - 1) * nw + np.clip(np.rint(x * nw / w), 0, nw - 1)).astype(
-        np.int32
-    )
 
 
 def unique_points(points, ids, selected):

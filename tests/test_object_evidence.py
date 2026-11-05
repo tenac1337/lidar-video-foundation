@@ -187,7 +187,7 @@ def test_reference_fit_preserves_scale_and_validates_holdout(tmp_path):
     mesh.apply_translation([0.025, 0, 0.02])
     original_volume = mesh.volume
     aligned, evidence = validate_and_align(mesh, entry, tmp_path, data, cal)
-    assert evidence["method"] == "reference_only_rigid_fit_with_held_out_validation"
+    assert evidence["method"] == "reference_only_translation_with_held_out_validation"
     assert aligned.volume == pytest.approx(original_volume)
     assert all(v["passed"] for v in evidence["views"])
     assert abs(aligned.bounds[0, 2]) < 1e-9
@@ -417,3 +417,29 @@ def test_associated_instance_is_not_split_into_phantom_neighbor(tmp_path):
     )
     with pytest.raises(ValueError, match="requires an instance assignment"):
         collect_squares(data, cal, [0], tmp_path)
+
+
+def test_large_base_offset_does_not_force_rotation_after_valid_support_snap(tmp_path):
+    mesh, entry, data, cal = aligned_fixture(tmp_path)
+    mesh.apply_translation([0, 0, -0.02])
+    _, evidence = validate_and_align(mesh, entry, tmp_path, data, cal)
+    assert evidence["method"] == "support_snap"
+    assert len(evidence["attempts"]) == 1
+    np.testing.assert_array_equal(np.array(evidence["board_refinement"])[:3, :3], np.eye(3))
+
+
+def test_translation_candidate_is_fit_without_heldout_points(tmp_path):
+    mesh, entry, data, cal = aligned_fixture(tmp_path)
+    mesh.apply_translation([0.025, 0, 0.02])
+    _, evidence = validate_and_align(mesh.copy(), entry, tmp_path, data, cal)
+    candidate = evidence["attempts"][-1]
+    assert candidate["method"] == "reference_only_translation_with_held_out_validation"
+    altered = copy.deepcopy(data)
+    for observation in entry["observations"][1:]:
+        mask = np.asarray(Image.open(tmp_path / observation["mask"])) > 0
+        altered["depth"][observation["frame"]][mask] = 0.954
+    _, changed_evidence = validate_and_align(mesh.copy(), entry, tmp_path, altered, cal)
+    attempts = changed_evidence["attempts"]
+    assert changed_evidence["views"][1]["median_m"] != evidence["views"][1]["median_m"]
+    translation = next(a for a in attempts if a["method"] == candidate["method"])
+    np.testing.assert_allclose(translation["matrix"], candidate["matrix"], atol=1e-12)

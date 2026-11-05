@@ -11,7 +11,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
-from lidar_video.capture import world_points
+from lidar_video.native_depth import sensor_camera_points
 
 
 def fit_support(points, seed=0, tolerance=0.003):
@@ -65,12 +65,13 @@ def clusters(points, radius=0.014, min_points=15):
 
 
 def extract_frame(data, frame=0, transform=None):
-    n = len(data["depth"])
-    k = np.broadcast_to(data["K"], (n, 3, 3))[frame]
     z = data["depth"][frame]
     mask = np.isfinite(z) & (z > 0) & (data["confidence"][frame] >= 1)
-    points = world_points(z, k, data["world_from_camera"][frame])[mask]
-    colors = data["rgb"][frame][mask] / 255
+    pose = data["world_from_camera"][frame]
+    points = (sensor_camera_points(data, frame) @ pose[:3, :3].T + pose[:3, 3])[mask]
+    finite = np.isfinite(points).all(axis=1)
+    points = points[finite]
+    colors = data["rgb"][frame][mask][finite] / 255
     if len(points) < 150:
         raise ValueError("Too few points to reconstruct a support plane")
     transform, residual = fit_support(points) if transform is None else (transform, None)

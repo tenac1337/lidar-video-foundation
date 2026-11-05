@@ -108,7 +108,15 @@ def test_plane_rejects_vertical_wall():
 def test_upstream_npz_preserves_metric_depth(capture, tmp_path):
     out = prepare_upstream(normalize(capture), tmp_path / "upstream")
     with np.load(out / "depth/depth.npz") as data:
-        assert set(data.files) == {"depth", "valid", "K", "frames"}
+        assert set(data.files) == {
+            "depth",
+            "valid",
+            "K",
+            "frames",
+            "native_K",
+            "native_depth_shape",
+            "depth_sample_id",
+        }
         np.testing.assert_array_equal(data["depth"], capture["depth"])
         assert data["valid"].all()
     assert (out / "input/video.mp4").stat().st_size > 0

@@ -14,15 +14,20 @@ import trimesh
 from PIL import Image
 from scipy.spatial import cKDTree
 
-from lidar_video.capture import REQUIRED, camera_points, load_capture, validate, write_json
+from lidar_video.capture import REQUIRED, load_capture, validate, write_json
 from lidar_video.chess_recognition import recognize
 from lidar_video.chess_scene import board_from_observation
+from lidar_video.native_depth import sensor_camera_points
 from lidar_video.pipeline import UPSTREAM_COMMIT, prepare_upstream
 from lidar_video.scenic_export import export_scenic, sample_scenic
 
 
 class MeshQualityError(ValueError):
     """Valid mesh data disagrees with measured geometry or support constraints."""
+
+    def __init__(self, message, *, evidence=None):
+        super().__init__(message)
+        self.evidence = evidence
 
 
 def check_mesh_bounds(mesh, lower, upper):
@@ -48,8 +53,7 @@ def rigid(value, name):
 
 def calibrated_points(data, calibration, frame):
     transform = rigid(calibration["board_from_world"], "board_from_world")
-    k = data["K"] if data["K"].ndim == 2 else data["K"][frame]
-    camera = camera_points(data["depth"][frame], k)
+    camera = sensor_camera_points(data, frame)
     pose = transform @ data["world_from_camera"][frame]
     return camera @ pose[:3, :3].T + pose[:3, 3]
 
@@ -242,6 +246,14 @@ def reconstruct(
     ]
     edges = []
     selected = {k: data[k] if k == "K" and data[k].ndim == 2 else data[k][frames] for k in REQUIRED}
+    for key in ("native_K", "native_depth_shape", "depth_sample_id"):
+        if key in data:
+            value = data[key]
+            selected[key] = (
+                value[frames]
+                if key == "depth_sample_id" or (key == "native_K" and value.ndim == 3)
+                else value
+            )
     recognition = recognize(selected, calibration, model) if model else None
     if recognition:
         write_json(out / "recognition.json", recognition)
@@ -273,9 +285,11 @@ def reconstruct(
                 check_mesh_bounds(mesh, lower, upper)
             except MeshQualityError as error:
                 if mesh_policy == "strict":
-                    raise MeshQualityError(f"{name}: {error}") from error
+                    raise MeshQualityError(f"{name}: {error}", evidence=error.evidence) from error
                 rejected[name] = str(error)
-                evidence["rejected_learned_mesh"] = dict(entry=entries[name], reason=str(error))
+                evidence["rejected_learned_mesh"] = dict(
+                    entry=entries[name], reason=str(error), alignment=error.evidence
+                )
                 mesh = None
             else:
                 accepted.append(name)

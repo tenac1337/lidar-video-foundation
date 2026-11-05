@@ -10,8 +10,9 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import confusion_matrix
 
-from lidar_video.capture import camera_points, validate, write_json
+from lidar_video.capture import validate, write_json
 from lidar_video.chess_data import SYMBOLS, random_placement, render_board
+from lidar_video.native_depth import sensor_camera_points
 
 
 def features(capture, calibration, cells=12):
@@ -34,8 +35,7 @@ def features(capture, calibration, cells=12):
     heights = np.zeros((64, cells * cells))
     colors, zs, seen = [[] for _ in range(64)], [[] for _ in range(64)], np.zeros((64, cells * cells), bool)
     for i, depth in enumerate(capture["depth"]):
-        k = capture["K"] if capture["K"].ndim == 2 else capture["K"][i]
-        points = camera_points(depth, k).reshape(-1, 3)
+        points = sensor_camera_points(capture, i).reshape(-1, 3)
         pose = transform @ capture["world_from_camera"][i]
         points = points @ pose[:3, :3].T + pose[:3, 3]
         rgb = capture["rgb"][i].reshape(-1, 3) / 255
