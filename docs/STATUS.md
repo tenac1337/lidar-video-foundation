@@ -34,7 +34,11 @@ The fix preserves native intrinsics and sample IDs through normalization, geomet
 
 Staged support alignment retains the original orientation when possible and regularizes rotation when needed. With identical native geometry, f8's held-out silhouette IoU improves from approximately 0.331 under the previous rigid fit to 0.681. Its held-out median depth error is still 5.612 mm versus 3.252 mm before support correction: a 2.360 mm degradation, exceeding the unchanged 1 mm guard. b8 also fails. Neither saved mesh is accepted, and no new simulation, scene graph or Scenic export is produced by this replay.
 
-The local suite has 89 passing tests. The new SAM 3D point-map adapter is fixture-tested; neural inference has not been rerun with it. A fresh A100 inference run using corrected native rays is the next test of learned shape quality, with the same acceptance thresholds.
+The local suite has 89 passing tests. A subsequent fresh A100-SXM4-80GB run at revision `e906281` re-segmented all ten views and completed both SAM 3D jobs with eight pose trials each. The corrected native-ray adapter now has real GPU execution evidence; upstream RoboSkills remained clean at its pinned revision.
+
+Both fresh meshes still fail unchanged validation. b8's final silhouette IoU is 0.366 / 0.426 / 0.343 across its three views. f8's final reference/held-out IoU is 0.619 / 0.631, but its held-out median depth distance increases from 3.711 mm before support correction to 6.292 mm afterward, exceeding the 1 mm degradation guard. Support-snap and translation-only candidates also fail. A separate collector validates both pieces despite the strict pipeline stopping on rejection. No new validated simulation, scene graph or Scenic export is produced.
+
+The complete result archive and corrected capture hashes were checked locally. Raw data and artifacts remain outside Git. This run confirms the corrected adapter executes on A100; it does not isolate whether the remaining mismatch comes from learned shape, support assumptions, sensor depth or calibration.
 
 ## Limits
 
