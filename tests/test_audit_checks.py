@@ -312,3 +312,48 @@ def test_rich_node_metadata_survives_fresh_scenic_sampling_with_position_variati
     assert fresh["nodes"][1]["position_m"] != graph["nodes"][1]["position_m"]
     assert fresh["nodes"][1]["evidence"] == graph["nodes"][1]["evidence"]
     assert fresh["nodes"][1]["square"] == "f3"
+
+
+@pytest.mark.parametrize(
+    "mutation", ["occupancy", "missing_relation", "duplicate", "edge_evidence", "frame", None]
+)
+def test_samples_preserve_relationships_and_coordinate_metadata(scene, tmp_path, mutation):
+    folder, graph, case = scene
+    graph["frame"] = "fixture_frame"
+    graph["nodes"].extend(
+        dict(id=name, kind="square", position_m=[0, 0, 0]) for name in ("f3", "a1")
+    )
+    graph["edges"].extend(
+        [
+            dict(source="left", relation="occupies", target="f3", evidence="fixture"),
+            dict(source="f3", relation="part_of", target="board"),
+            dict(source="a1", relation="part_of", target="board"),
+        ]
+    )
+    (folder / "scene_graph.json").write_text(json.dumps(graph))
+    sample = copy.deepcopy(graph)
+    if mutation == "occupancy":
+        sample["edges"][2]["target"] = "a1"
+    elif mutation == "missing_relation":
+        sample["edges"] = [e for e in sample["edges"] if e["relation"] != "part_of"]
+    elif mutation == "duplicate":
+        sample["edges"].append(copy.deepcopy(sample["edges"][2]))
+    elif mutation == "edge_evidence":
+        sample["edges"][2]["evidence"] = "fabricated"
+    elif mutation == "frame":
+        sample["frame"] = "unrelated_frame"
+    else:
+        sample["edges"].reverse()
+        for edge in sample["edges"]:
+            if edge["relation"] == "on":
+                edge["evidence"] = "sampled_constraint"
+    (folder / "scenic_samples.json").write_text(json.dumps(dict(samples=[sample])))
+    result = run_checks(case, tmp_path, tmp_path / "audit")
+    assert result["geometry"]["status"] == "pass"
+    assert result["physics"]["status"] == "pass"
+    assert result["exports"]["status"] == ("pass" if mutation is None else "fail")
+    if mutation:
+        assert any(
+            word in result["exports"]["findings"][0]["summary"]
+            for word in ("relationships", "graph metadata")
+        )

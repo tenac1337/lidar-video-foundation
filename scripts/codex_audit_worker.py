@@ -60,7 +60,10 @@ def command(packet_path, report_path, binary="codex"):
         "the CLI will save it. Evidence references must use only the schema enum of files inside this audit directory; discuss external source/input paths in findings instead. "
         "Stay within your declared role and scope; do not re-audit every role or explore unrelated workspace files. "
         "Missing or unexecuted evidence is blocked, not pass. Numerical failure cannot be overridden. "
-        "Do not claim robot manipulation or a pristine final evaluation. Make no network requests."
+        "Do not claim robot manipulation or a pristine final evaluation. Make no network requests. "
+        f"Use the existing Python environment at {sys.executable} for local checks; "
+        f"project source for PYTHONPATH: {Path(__file__).resolve().parents[1] / 'src'}. "
+        "Do not install packages or substitute a different interpreter if imports fail."
     )
     return [
         binary,

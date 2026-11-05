@@ -8,10 +8,10 @@ Four fresh reviewer roles consume explicit case and evidence packets:
 
 - Geometry: original native-ray, mask, transform and silhouette gates, every expected object, square bounds and linkage to full exported learned meshes.
 - Physics: a fresh bounded MuJoCo passive rollout, body inventory, free movable bodies, declared mass/friction, collision envelopes, support contact, solver warnings and penetration. Actuators, equality constraints and gravity compensation are rejected in this passive-only scope.
-- Exports: graph structure and assets, saved Scenic samples, plus fresh Scenic compilation/sampling with stable per-ID metadata, asset references and dimensions; only object positions may vary.
+- Exports: graph structure and assets, saved Scenic samples, plus fresh Scenic compilation/sampling with stable per-ID metadata, asset references and dimensions; only object positions and documented sampling provenance may vary.
 - Adversarial: concrete missing-object, nonfinite-coordinate, broken-identity and overlapping-object mutations against the same graph validator, supplemented by independent agent review.
 
-The checks bind primitive collider position/orientation and compiled mesh assets to the graph. Scenic samples must preserve each ID’s declared identity, assets and metadata; matching only the overall inventory is insufficient.
+The checks bind primitive collider position/orientation and compiled mesh assets to the graph. Scenic samples must preserve each ID’s declared identity, assets and metadata; matching only the overall inventory is insufficient. Exported relationships (including occupancy and board membership) and coordinate metadata must also match; only support-edge evidence may become `sampled_constraint`.
 
 Agent reviews cannot override deterministic fail or blocked results. Acceptance requires all four machine checks and all four correctly bound reviewer reports to pass. A completed agent process is not acceptance. Missing reports remain `awaiting_reviews`; missing simulation evidence is `blocked` in its check, never silently skipped. Any changed input, policy source, packet or saved numerical check invalidates the round.
 

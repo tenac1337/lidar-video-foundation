@@ -408,6 +408,35 @@ def _validate_exports_samples(samples, graph, expected):
     for sample in samples:
         physical = validate_graph(sample, expected)
         validate_sample(sample)
+        # sample_scenic changes sampling provenance, not the coordinate frame or
+        # scene assumptions. Preserve all other graph-level fields exactly.
+        sampled_fields = {"nodes", "edges", "source", "sample_index", "sample_seed", "variation", "tracks"}
+        if {k: v for k, v in sample.items() if k not in sampled_fields} != {
+            k: v for k, v in graph.items() if k not in sampled_fields
+        }:
+            raise ValueError("Scenic graph metadata disagrees with source")
+        # Preserve the complete edge multiset, including relation metadata. Only
+        # support-edge evidence has a documented sampled form. Matching consumes
+        # edges so duplicates, additions and removals cannot silently pass.
+        remaining = copy.deepcopy(graph.get("edges", []))
+        for edge in sample.get("edges", []):
+            match = next(
+                (
+                    index
+                    for index, original in enumerate(remaining)
+                    if edge == original
+                    or (
+                        original.get("relation") == "on"
+                        and edge == dict(original, evidence="sampled_constraint")
+                    )
+                ),
+                None,
+            )
+            if match is None:
+                raise ValueError("Scenic relationships disagree with source graph")
+            remaining.pop(match)
+        if remaining:
+            raise ValueError("Scenic relationships are missing from sample")
         if {n["id"] for n in physical} != set(dimensions):
             raise ValueError("Scenic stable IDs disagree with graph")
         if {n["id"] for n in sample["nodes"]} != set(source_nodes):
