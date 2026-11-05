@@ -76,3 +76,7 @@ ruff check src scripts tests
 See [the architecture](docs/ARCHITECTURE.md) for module responsibilities and [workflow commands](docs/WORKFLOWS.md) for reconstruction, profiling and verification. Private captures, generated scenes, learned meshes, model weights, runtime logs and executed notebooks stay outside Git. `.gitignore` includes safeguards; review staged files before committing.
 
 Upstream attribution and licensing notes are in [NOTICE.md](NOTICE.md). No project-wide open-source license has been selected.
+
+## Creation and audit workflow
+
+The Gym-Anything-inspired workflow adds independent geometry, physics, export and adversarial reviews around fixed measured-geometry gates. Run `lidar-video audit-prepare`, `audit-finalize`, or `audit-loop` with fresh reviewer workers and optional bounded candidate repairs. See [the workflow and case contract](docs/CREATION_AUDIT.md). Acceptance is scoped to the declared development case; passive simulation checks do not establish real robot manipulation.
