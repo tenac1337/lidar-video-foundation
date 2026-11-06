@@ -18,6 +18,8 @@ The package preserves measured camera-axis depth in metres and uses OpenCV camer
 - `scenic_export.py`: probabilistic spatial variation and sample validation using the same object IDs and bounds.
 - `chess_data.py`, `chess_recognition.py`, `chess_scene.py`: procedural fixtures, synthetic-style recognition and explicitly supplied game-state constraints.
 - `manipulation.py`: separate known-scene synthetic manipulation experiment.
+- `audit_checks.py`: fixed measured-geometry, passive physics, shared-export and structural adversarial checks.
+- `creation_audit.py`: hashed case packets, independent review contracts, fail-closed decisions and up to three bounded repair rounds.
 - `cli.py`: runnable stages and explicit input/output paths.
 
 ## Boundaries

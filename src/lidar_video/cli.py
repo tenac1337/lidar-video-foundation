@@ -7,6 +7,19 @@ def main():
     parser = argparse.ArgumentParser(description="RGB-D to RoboSkills simulation, scene graph, and Scenic")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
+    for name in ("audit-prepare", "audit-loop"):
+        p = sub.add_parser(name)
+        p.add_argument("case", type=Path)
+        p.add_argument("--out", type=Path, required=True)
+        if name == "audit-loop":
+            p.add_argument(
+                "--worker", type=Path, required=True, help="JSON argv list; packet/report appended"
+            )
+            p.add_argument("--builder", type=Path, help="Optional JSON argv list for repairs in new files")
+            p.add_argument("--rounds", type=int, default=3)
+            p.add_argument("--timeout", type=float, default=600)
+    p = sub.add_parser("audit-finalize")
+    p.add_argument("run", type=Path)
     p = sub.add_parser("import-stray")
     p.add_argument("capture", type=Path)
     p.add_argument("--out", type=Path, required=True)
@@ -75,7 +88,23 @@ def main():
             p.add_argument("--no-simulation", action="store_true")
     args = parser.parse_args()
     try:
-        if args.command == "import-stray":
+        if args.command in ("audit-prepare", "audit-loop", "audit-finalize"):
+            from lidar_video.creation_audit import finalize, prepare, read_json, run_loop
+
+            if args.command == "audit-prepare":
+                result = prepare(args.case, args.out)
+            elif args.command == "audit-finalize":
+                result = finalize(args.run)
+            else:
+                result = run_loop(
+                    args.case,
+                    args.out,
+                    read_json(args.worker),
+                    builder=read_json(args.builder) if args.builder else None,
+                    rounds=args.rounds,
+                    timeout=args.timeout,
+                )
+        elif args.command == "import-stray":
             from lidar_video.stray import import_stray
 
             result = import_stray(args.capture, args.out, fps=args.fps)
@@ -191,6 +220,8 @@ def main():
                 args.capture, args.out, samples=args.samples, simulate_output=not args.no_simulation
             )
         print(json.dumps(result, indent=2))
+        if args.command.startswith("audit-") and result["status"] != "accepted":
+            parser.exit(3, "Audit is not accepted; inspect decision.json or loop.json.\n")
         if args.command == "robot-demo" and not result["passed"]:
             parser.exit(3, "Robot verification failed; see the saved verification.json.\n")
         if args.command == "chess-demo" and result["status"] != "completed":
