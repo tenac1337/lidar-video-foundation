@@ -388,12 +388,17 @@ def _exports(graph, scene, expected, out):
     # this subprocess provides a timeout, not an untrusted-code security sandbox.
     target = out / "fresh_scenic_samples.json"
     replay_target = out / "replayed_scenic_samples.json"
-    code = (
-        "import json,sys; from lidar_video.scenic_export import sample_scenic; "
-        "graph=json.load(open(sys.argv[2])); "
-        "sample_scenic(sys.argv[1],graph,sys.argv[3],count=2,seed=17); "
-        "sample_scenic(sys.argv[1],graph,sys.argv[4],count=int(sys.argv[5]),seed=int(sys.argv[6]))"
-    )
+    code = """import json, sys
+try:
+    import scenic
+    from lidar_video.scenic_export import sample_scenic
+except ImportError as error:
+    print(f"Scenic runtime unavailable: {error}", file=sys.stderr)
+    sys.exit(75)
+graph = json.load(open(sys.argv[2]))
+sample_scenic(sys.argv[1], graph, sys.argv[3], count=2, seed=17)
+sample_scenic(sys.argv[1], graph, sys.argv[4], count=int(sys.argv[5]), seed=int(sys.argv[6]))
+"""
     completed = subprocess.run(
         [
             sys.executable,
@@ -411,6 +416,8 @@ def _exports(graph, scene, expected, out):
         timeout=60,
     )
     (out / "scenic_compile.log").write_text(completed.stdout + completed.stderr)
+    if completed.returncode == 75:
+        raise ImportError("Scenic worker runtime is unavailable; see scenic_compile.log")
     if completed.returncode:
         raise ValueError("Fresh Scenic compilation/sampling failed; see scenic_compile.log")
     fresh = json.loads(target.read_text())["samples"]

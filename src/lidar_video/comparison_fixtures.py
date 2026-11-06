@@ -67,6 +67,7 @@ def generate_comparison_fixtures(out):
             seal_exports(candidate, folder / "seal.json")
         save(folder / "case.json", dict(
             schema="export-comparison-v1", scene_dir="scene", expected_objects=["left", "right"],
+            case_id=name, scene_id="generated-two-box-scene",
             evidence_seal="seal.json",
         ))
         cases.append(dict(

@@ -64,6 +64,9 @@ def compare_exports(manifest_file, out):
     manifest = read_json(manifest_file)
     if manifest.get("schema") != "export-comparison-v1":
         raise ValueError("Expected export-comparison-v1")
+    if not all(isinstance(manifest.get(k), str) and manifest[k].strip()
+               for k in ("case_id", "scene_id")):
+        raise ValueError("Comparison manifest requires case_id and scene_id")
     expected = manifest.get("expected_objects")
     if (
         not isinstance(expected, list) or not expected
@@ -125,6 +128,7 @@ def compare_exports(manifest_file, out):
             raise ValueError("Evidence seal changed during comparison")
     result = dict(
         schema="export-comparison-result-v1", decisions=decisions,
+        case_id=manifest["case_id"], scene_id=manifest["scene_id"],
         input_files=before, manifest_sha256=manifest_digest, evidence_seal_sha256=seal_hash,
         mode_scope={
             "export": "Readable nonempty graph, samples and program; no semantic validation",
@@ -215,6 +219,8 @@ def summarize_comparisons(manifest_file, out):
         record = read_json(path)
         if record.get("schema") != "export-comparison-result-v1":
             raise ValueError("Unsupported comparison result")
+        if any(record.get(k) != case.get(k) for k in ("case_id", "scene_id")):
+            raise ValueError("Label case_id/scene_id does not match the comparison result")
         cases.append(dict(case, decisions=record["decisions"]))
     result = summarize_decisions(cases)
     result["input_hashes"] = hashes

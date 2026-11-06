@@ -89,4 +89,31 @@ This evaluator's all-valid-mask depth metric differs from the construction gates
 
 ## Supported outputs
 
-The runner covers geometric scoring and integrity, not independent correctness labeling or dimension/pose ground-truth scoring. [Export comparisons](EXPORT_COMPARISON.md) provide fixed-policy decisions, elapsed times and aggregation with externally supplied labels. Do not derive correctness labels from the same checks being compared.
+The runner covers geometric scoring, optional height-reference errors and integrity, not independent correctness labeling or full pose/reference-shape scoring. [Export comparisons](EXPORT_COMPARISON.md) provide fixed-policy decisions, elapsed times and aggregation with externally supplied labels. Do not derive correctness labels from the same checks being compared.
+
+## Optional independent height measurements
+
+Add `"height_references": "height.json"` to the evaluation case before freezing. The file is hash-bound with the other inputs and must use the same scene and object IDs:
+
+```json
+{
+  "schema": "object-height-references-v1",
+  "scene_id": "T01",
+  "units": "metres",
+  "axis": "board_z",
+  "not_used_for_reconstruction": true,
+  "objects": {
+    "piece_01": {
+      "height_m": 0.05,
+      "resolution_m": 0.001,
+      "measurement_method": "ruler"
+    }
+  }
+}
+```
+
+This compares the frozen mesh's maximum minus minimum board-Z coordinate with an independently measured upright-object height. It does not compare the collider or shift, resize or fit the prediction. The result includes signed and absolute error in metres, the supplied instrument resolution and method, and an explicit scored-object count. Instrument resolution is not a statistical confidence interval or a pass/fail threshold.
+
+Reference IDs may cover a subset of expected objects; absent references and missing/invalid predictions remain explicit statuses. Wrong units, a different scene, unknown object IDs, invalid numbers, and measurements declared as used for reconstruction are rejected. The independence flag is a human declaration, not something checksums can prove.
+
+Do not supply base diameter as full mesh width: those are different physical quantities. Width and full pose reference scoring are not implemented. Existing evaluation locks must be regenerated after evaluator code changes; preserve earlier runs rather than overwriting them.

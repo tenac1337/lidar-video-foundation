@@ -125,3 +125,25 @@ def test_input_mutation_during_mode_execution_invalidates_comparison(tmp_path, m
     with pytest.raises(ValueError, match="input changed"):
         compare_exports(manifest, out)
     assert not (out / "comparison.json").exists()
+
+
+@pytest.mark.parametrize("field", ["case_id", "scene_id"])
+def test_result_label_identity_mismatch_is_rejected(generated, tmp_path, field):
+    fixtures, _ = generated
+    manifest = read_json(fixtures["labels"])
+    manifest["cases"][0][field] = "wrong-identity"
+    path = tmp_path / "mislabeled.json"
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="does not match"):
+        summarize_comparisons(path, tmp_path / "summary.json")
+
+
+def test_comparison_manifest_requires_identity(generated, tmp_path):
+    fixtures, _ = generated
+    original = Path(fixtures["cases"][0]["manifest"])
+    manifest = read_json(original)
+    manifest.pop("case_id")
+    path = tmp_path / "missing-identity.json"
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="requires case_id"):
+        compare_exports(path, tmp_path / "out")

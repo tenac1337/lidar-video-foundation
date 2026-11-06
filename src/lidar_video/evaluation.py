@@ -119,6 +119,33 @@ def _code():
     return {str(p): digest(p) for p in sorted(Path(__file__).parent.glob("*.py"))}
 
 
+def _height_references(path, scene_id, expected):
+    if path is None:
+        return {}
+    record = read_json(path)
+    if (
+        record.get("schema") != "object-height-references-v1"
+        or record.get("scene_id") != scene_id
+        or record.get("units") != "metres"
+        or record.get("axis") != "board_z"
+        or record.get("not_used_for_reconstruction") is not True
+    ):
+        raise ValueError("Height references require matching scene, metre/board_z units and independence")
+    objects = record.get("objects")
+    if not isinstance(objects, dict) or not objects or not set(objects) <= set(expected):
+        raise ValueError("Height reference IDs must be a nonempty subset of expected_objects")
+    for ref in objects.values():
+        if not isinstance(ref, dict):
+            raise ValueError("Height reference must be an object")
+        for name in ("height_m", "resolution_m"):
+            value = ref.get(name)
+            if type(value) not in (int, float) or not np.isfinite(value) or value <= 0:
+                raise ValueError(f"Reference {name} must be a finite positive number")
+        if not isinstance(ref.get("measurement_method"), str) or not ref["measurement_method"].strip():
+            raise ValueError("Reference measurement_method is required")
+    return objects
+
+
 def freeze_evaluation(case_file, out):
     """Freeze supplied files/settings. Does not read image pixels or run inference."""
     case_file, out = Path(case_file).resolve(), Path(out).resolve()
@@ -162,6 +189,10 @@ def freeze_evaluation(case_file, out):
     if names:
         _names(names, "prediction object IDs")
     paths = {case_file, *(Path(case[k]) for k in ("prediction", "capture", "calibration"))}
+    if case.get("height_references") is not None:
+        case["height_references"] = str((case_file.parent / case["height_references"]).resolve())
+        _height_references(case["height_references"], case["scene_id"], expected)
+        paths.add(Path(case["height_references"]))
     for obj in objects:
         obj["mesh"] = str((Path(case["prediction"]).parent / obj["mesh"]).resolve())
         if Path(obj["mesh"]).suffix.lower() != ".ply":
@@ -288,6 +319,10 @@ def score_evaluation(run, *, expected_lock_sha256):
                 row.update(median_m=float(np.median(distances)), p90_m=float(np.quantile(distances, .9)))
         rows.append(row)
     object_summaries = []
+    height_references = _height_references(
+        case.get("height_references"), case["scene_id"], case["expected_objects"]
+    )
+    height_scores = []
     for name in case["expected_objects"]:
         subset = [r for r in rows if r["object_id"] == name]
         depths = [r["median_m"] for r in subset if "median_m" in r]
@@ -297,6 +332,24 @@ def score_evaluation(run, *, expected_lock_sha256):
             mean_view_median_m=float(np.mean(depths)) if depths else None,
             mean_view_silhouette_iou=float(np.mean(silhouettes)) if silhouettes else None,
         ))
+        ref = height_references.get(name)
+        height = dict(object_id=name)
+        if ref is not None:
+            height.update(reference_height_m=ref["height_m"], resolution_m=ref["resolution_m"],
+                          measurement_method=ref["measurement_method"])
+        if name not in objects:
+            height["status"] = "missing_prediction"
+        elif name in invalid:
+            height["status"] = "invalid_prediction"
+        else:
+            mesh = loaded[name][0]
+            predicted_height = float(mesh.bounds[1, 2] - mesh.bounds[0, 2])
+            height.update(predicted_height_m=predicted_height,
+                          status="missing_reference" if ref is None else "scored")
+            if ref is not None:
+                error = predicted_height - ref["height_m"]
+                height.update(signed_error_m=error, absolute_error_m=abs(error))
+        height_scores.append(height)
     expected = set(case["expected_objects"])
     result = dict(
         schema="scene-evaluation-metrics-v1", status="scored", scene_id=case["scene_id"],
@@ -306,12 +359,16 @@ def score_evaluation(run, *, expected_lock_sha256):
         unexpected_objects=sorted(objects.keys() - expected), invalid_predictions=invalid,
         unscorable_views=sum(r["status"] != "scored" for r in rows),
         views=rows, objects=object_summaries, metrics=METRICS,
+        height_scores=height_scores,
+        height_scored_objects=sum(h["status"] == "scored" for h in height_scores),
         limits=[
             "Scored is execution status, not scene acceptance or independent correctness certification.",
             "Observed surface agreement does not measure hidden geometry or sensor accuracy.",
             "Distance uses surface sampling, not exact triangle distance; no fitting is performed.",
             "Mask other-object pixels are excluded; this is not a full visibility renderer.",
             "No pooled average is provided that could hide missing objects or unscorable views.",
+            "Height is the frozen mesh's extent along board Z for upright objects, not collider height.",
+            "Reference independence is declared; instrument resolution is not a confidence interval.",
         ],
     )
     verify_hashes(lock["files"])

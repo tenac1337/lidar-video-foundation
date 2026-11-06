@@ -178,3 +178,67 @@ def test_bad_split_rejected(tmp_path, frames, match):
     )))
     with pytest.raises(ValueError, match=match):
         split_evaluation_capture(tmp_path / "capture.npz", plan, tmp_path / "split")
+
+
+def add_height_reference(tmp_path, case_path, case):
+    reference = dict(
+        schema="object-height-references-v1", scene_id="fixture", units="metres", axis="board_z",
+        not_used_for_reconstruction=True,
+        objects={"object": dict(height_m=.05, resolution_m=.001, measurement_method="ruler")},
+    )
+    path = tmp_path / "height.json"
+    path.write_text(json.dumps(reference))
+    case["height_references"] = "height.json"
+    case_path.write_text(json.dumps(case))
+    return path, reference
+
+
+def test_height_uses_fixed_mesh_extent_and_records_measurement_resolution(tmp_path):
+    path, case, prediction = case_fixture(tmp_path)
+    add_height_reference(tmp_path, path, case)
+    prediction["objects"][0]["board_from_mesh"][2][3] = .02
+    (tmp_path / "prediction.json").write_text(json.dumps(prediction))
+    result = evaluate(path, tmp_path / "scored")
+    row = result["height_scores"][0]
+    assert result["height_scored_objects"] == 1
+    assert row["predicted_height_m"] == pytest.approx(.06)
+    assert row["signed_error_m"] == pytest.approx(.01)
+    assert row["absolute_error_m"] == pytest.approx(.01)
+    assert row["resolution_m"] == .001
+
+
+@pytest.mark.parametrize("field,value", [
+    ("height_m", -1), ("height_m", True), ("resolution_m", 0), ("measurement_method", ""),
+])
+def test_invalid_height_measurement_rejected(tmp_path, field, value):
+    path, case, _ = case_fixture(tmp_path)
+    ref_path, ref = add_height_reference(tmp_path, path, case)
+    ref["objects"]["object"][field] = value
+    ref_path.write_text(json.dumps(ref))
+    with pytest.raises(ValueError, match="Reference"):
+        freeze_evaluation(path, tmp_path / "frozen")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("scene_id", "wrong"), ("units", "millimetres"), ("axis", "camera_z"),
+    ("not_used_for_reconstruction", False),
+])
+def test_height_reference_contract_cannot_be_silently_changed(tmp_path, field, value):
+    path, case, _ = case_fixture(tmp_path)
+    ref_path, ref = add_height_reference(tmp_path, path, case)
+    ref[field] = value
+    ref_path.write_text(json.dumps(ref))
+    with pytest.raises(ValueError, match="Height references"):
+        freeze_evaluation(path, tmp_path / "frozen")
+
+
+def test_height_reference_is_hash_bound_and_missing_labels_remain_explicit(tmp_path):
+    path, case, _ = case_fixture(tmp_path)
+    result = evaluate(path, tmp_path / "no-height-reference")
+    assert result["height_scores"][0]["status"] == "missing_reference"
+    assert "absolute_error_m" not in result["height_scores"][0]
+    ref_path, _ = add_height_reference(tmp_path, path, case)
+    frozen = freeze_evaluation(path, tmp_path / "frozen")
+    ref_path.write_text(ref_path.read_text() + " ")
+    with pytest.raises(ValueError, match="changed"):
+        score_evaluation(tmp_path / "frozen", expected_lock_sha256=frozen["lock_sha256"])

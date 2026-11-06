@@ -12,6 +12,8 @@ Each command runs the following policies on the same input snapshot:
 
 All policies use fixed inputs and no repairs. They have different checking costs; `elapsed_seconds` records time per policy. Do not describe them as matched-compute reconstruction methods. Missing required runtimes or seals produce `blocked`; malformed artifacts produce `reject`; completing the selected checks produces `accept` for that policy only.
 
+Scenic worker dependency imports have a distinct unavailable-runtime exit status, so a missing dependency in the child process also produces `blocked`. A program compilation or replay error remains a rejection.
+
 ## Seal and compare an export
 
 ```sh
@@ -25,6 +27,8 @@ Example manifest, with paths relative to the manifest file:
 ```json
 {
   "schema": "export-comparison-v1",
+  "case_id": "case-001",
+  "scene_id": "source-scene-001",
   "scene_dir": "scene",
   "expected_objects": ["left", "right"],
   "evidence_seal": "scene-seal.json"
@@ -32,6 +36,8 @@ Example manifest, with paths relative to the manifest file:
 ```
 
 `expected_objects` follows the graph validator's contract: use square IDs for nodes with a `square` field and node IDs otherwise.
+
+`case_id` and `scene_id` are required and copied into the result. Aggregation rejects labels whose IDs differ from the selected result, rather than silently joining unrelated files. Regenerate older manifests/results without these IDs.
 
 ```sh
 lidar-video export-compare runs/comparison-case.json --out runs/comparison
