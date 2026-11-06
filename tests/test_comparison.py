@@ -147,3 +147,39 @@ def test_comparison_manifest_requires_identity(generated, tmp_path):
     path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="requires case_id"):
         compare_exports(path, tmp_path / "out")
+
+
+@pytest.mark.parametrize("asset_kind", ["visual", "collision"])
+@pytest.mark.parametrize("collapsed", [False, True])
+def test_resealed_mesh_assets_require_nonzero_surface_area(generated, tmp_path, asset_kind, collapsed):
+    import shutil
+
+    import trimesh
+
+    fixtures, _ = generated
+    original = Path(fixtures["cases"][0]["manifest"]).parent
+    scene = tmp_path / "scene"
+    shutil.copytree(original / "scene", scene)
+    graph = read_json(scene / "scene_graph.json")
+    samples = read_json(scene / "scenic_samples.json")
+    metadata = dict(mesh_path="visual.ply", collision_paths=["collision.ply"])
+    for record in [graph, *samples["samples"]]:
+        next(n for n in record["nodes"] if n["id"] == "left").update(metadata)
+    for kind in ("visual", "collision"):
+        mesh = trimesh.creation.box(extents=[0.02, 0.02, 0.03])
+        if collapsed and kind == asset_kind:
+            mesh.vertices[:] = 0
+        mesh.export(scene / f"{kind}.ply")
+    (scene / "scene_graph.json").write_text(json.dumps(graph))
+    (scene / "scenic_samples.json").write_text(json.dumps(samples))
+    # A current seal proves byte integrity, not that the surface is usable.
+    comparison.seal_exports(scene, tmp_path / "seal.json")
+    manifest = read_json(original / "case.json")
+    path = tmp_path / "case.json"
+    path.write_text(json.dumps(manifest))
+    result = compare_exports(path, tmp_path / "comparison")
+    assert all(row["decision"] == "accept" for row in result["decisions"][:2])
+    consistency = result["decisions"][-1]
+    assert consistency["decision"] == ("reject" if collapsed else "accept")
+    if collapsed:
+        assert "nonzero-area" in consistency["reason"]

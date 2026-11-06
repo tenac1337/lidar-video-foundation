@@ -7,6 +7,17 @@ def main():
     parser = argparse.ArgumentParser(description="RGB-D to RoboSkills simulation, scene graph, and Scenic")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
+    p = sub.add_parser("reconstruction-freeze")
+    p.add_argument("config", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("reconstruction-run")
+    p.add_argument("run", type=Path)
+    p.add_argument("--lock-sha256", required=True)
+    p = sub.add_parser("inspect-stray")
+    p.add_argument("capture", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--fps", type=float, default=2.0)
+    p.add_argument("--plan", type=Path)
     p = sub.add_parser("comparison-fixtures")
     p.add_argument("--out", type=Path, required=True)
     p = sub.add_parser("export-seal")
@@ -118,7 +129,21 @@ def main():
             p.add_argument("--no-simulation", action="store_true")
     args = parser.parse_args()
     try:
-        if args.command == "comparison-fixtures":
+        if args.command in ("reconstruction-freeze", "reconstruction-run"):
+            from lidar_video.reconstruction_run import freeze_reconstruction, run_reconstruction
+
+            try:
+                if args.command == "reconstruction-freeze":
+                    result = freeze_reconstruction(args.config, args.out)
+                else:
+                    result = run_reconstruction(args.run, expected_lock_sha256=args.lock_sha256)
+            except (OSError, KeyError, TypeError, AttributeError) as error:
+                raise ValueError(f"Invalid or unavailable reconstruction input: {error}") from error
+        elif args.command == "inspect-stray":
+            from lidar_video.intake import inspect_stray
+
+            result = inspect_stray(args.capture, args.out, fps=args.fps, plan=args.plan)
+        elif args.command == "comparison-fixtures":
             from lidar_video.comparison_fixtures import generate_comparison_fixtures
 
             result = generate_comparison_fixtures(args.out)
@@ -284,6 +309,10 @@ def main():
                 args.capture, args.out, samples=args.samples, simulate_output=not args.no_simulation
             )
         print(json.dumps(result, indent=2))
+        if args.command == "reconstruction-run" and result["status"] != "completed":
+            parser.exit(3, "Reconstruction checks did not complete; inspect result.json.\n")
+        if args.command == "inspect-stray" and result["status"] != "ready":
+            parser.exit(3, "Capture intake is not ready; inspect the saved report.\n")
         if args.command.startswith("audit-") and result["status"] != "accepted":
             parser.exit(3, "Audit is not accepted; inspect decision.json or loop.json.\n")
         if args.command == "robot-demo" and not result["passed"]:
