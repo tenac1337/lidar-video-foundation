@@ -80,3 +80,5 @@ Upstream attribution and licensing notes are in [NOTICE.md](NOTICE.md). No proje
 ## Creation and audit workflow
 
 The Gym-Anything-inspired workflow adds independent geometry, physics, export and adversarial reviews around fixed measured-geometry gates. Run `lidar-video audit-prepare`, `audit-finalize`, or `audit-loop` with fresh reviewer workers and optional bounded candidate repairs. See [the workflow and case contract](docs/CREATION_AUDIT.md). Acceptance is scoped to the declared development case; passive simulation checks do not establish real robot manipulation.
+
+For learned meshes which project onto reference-image background, `lidar-video refine-silhouettes` creates new candidates using reference-only voxel carving. [The refinement contract](docs/SILHOUETTE_REFINEMENT.md) explains how to re-audit them without changing measurements or acceptance thresholds.
