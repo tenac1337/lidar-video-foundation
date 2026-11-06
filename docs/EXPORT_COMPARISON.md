@@ -14,6 +14,8 @@ All policies use fixed inputs and no repairs. They have different checking costs
 
 Scenic worker dependency imports have a distinct unavailable-runtime exit status, so a missing dependency in the child process also produces `blocked`. A program compilation or replay error remains a rejection.
 
+Consistency checks require each referenced visual and collision mesh to have finite vertices and finite positive surface area within the declared graph dimensions. A collapsed mesh is rejected even when its file has faces and a matching evidence seal. This does not establish watertightness, correct topology or agreement with observed surfaces.
+
 ## Seal and compare an export
 
 ```sh
