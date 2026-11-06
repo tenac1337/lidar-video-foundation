@@ -12,7 +12,7 @@ This is the core implementation for an iPhone LiDAR/video reconstruction project
 - One shared scene description drives MuJoCo simulation, scene graphs, and executable Scenic samples.
 - Geometry profiling, original-input checks, held-out pose experiments, and physics replay verification.
 
-**Detailed real-piece reconstruction remains unresolved.** The real iPhone A100 run generated 14 meshes; none passed every geometry check. Its simulation used 30 coarse depth completions. Profiling found suspect foreground depth and inconsistent placement across views. A subsequent three-view A100 run generated one candidate, which also failed held-out checks. Its fallback exposed cross-square instance splitting; the follow-up preserves identity and rejects mixed-square depth before inference. The current fallback is a prototype, not validated physical geometry. See [status and limitations](docs/STATUS.md).
+**Full-board reconstruction remains unresolved.** A subsequent two-object development case now passes measured geometry using explicit multiview completion; this is not an untouched evaluation or absolute-accuracy result. See [multiview completion](docs/MULTIVIEW_COMPLETION.md). Earlier runs: The real iPhone A100 run generated 14 meshes; none passed every geometry check. Its simulation used 30 coarse depth completions. Profiling found suspect foreground depth and inconsistent placement across views. A subsequent three-view A100 run generated one candidate, which also failed held-out checks. Its fallback exposed cross-square instance splitting; the follow-up preserves identity and rejects mixed-square depth before inference. The current fallback is a prototype, not validated physical geometry. See [status and limitations](docs/STATUS.md).
 
 ## Install
 
@@ -82,3 +82,5 @@ Upstream attribution and licensing notes are in [NOTICE.md](NOTICE.md). No proje
 The Gym-Anything-inspired workflow adds independent geometry, physics, export and adversarial reviews around fixed measured-geometry gates. Run `lidar-video audit-prepare`, `audit-finalize`, or `audit-loop` with fresh reviewer workers and optional bounded candidate repairs. See [the workflow and case contract](docs/CREATION_AUDIT.md). Acceptance is scoped to the declared development case; passive simulation checks do not establish real robot manipulation.
 
 For learned meshes which project onto reference-image background, `lidar-video refine-silhouettes` creates new candidates using reference-only voxel carving. [The refinement contract](docs/SILHOUETTE_REFINEMENT.md) explains how to re-audit them without changing measurements or acceptance thresholds.
+
+`lidar-video complete-multiview` creates candidates from explicit construction views, board support and assigned-square priors while reserving validation views. [The V2 contract](docs/MULTIVIEW_COMPLETION.md) records these assumptions and keeps the numerical thresholds unchanged.

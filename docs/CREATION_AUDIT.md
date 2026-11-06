@@ -33,7 +33,7 @@ Paths resolve relative to the case JSON. Use a new output directory for every ru
 }
 ```
 
-The mesh manifest retains `roboskills-chess-meshes-v1` and per-entry `instance-multiview-v1` contracts. All observation masks, candidate meshes/poses, capture and calibration are hashed. Every expected object must be present; an empty or partial manifest cannot pass. The optional `scene_dir` points to the matching reconstruction output containing `scene_graph.json`, `scenario.scenic`, `scenic_samples.json`, assets and `simulation/scene.xml`. An absent scene blocks downstream checks.
+The mesh manifest retains `roboskills-chess-meshes-v1` and per-entry `instance-multiview-v1` or explicit-split `instance-multiview-v2` contracts (see [multiview completion](MULTIVIEW_COMPLETION.md)). All observation masks, candidate meshes/poses, capture and calibration are hashed. Every expected object must be present; an empty or partial manifest cannot pass. The optional `scene_dir` points to the matching reconstruction output containing `scene_graph.json`, `scenario.scenic`, `scenic_samples.json`, assets and `simulation/scene.xml`. An absent scene blocks downstream checks.
 
 For synthetic fixtures use `geometry_scope: "synthetic_fixture"`, `scene_dir`, and the exact expected object names. Do not supply capture, calibration or mesh manifest. A synthetic pass says nothing about real sensor reconstruction.
 

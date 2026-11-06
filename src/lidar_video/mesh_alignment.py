@@ -1,7 +1,7 @@
 """Scale-preserving support fit with per-instance, per-view acceptance.
 
-Only the chosen reference trains the fit. Every other segmented view is held out.
-No point pool, unlabelled square cloud, or free scale can satisfy this contract.
+V1 fits only the reference. V2 declares construction and validation views explicitly.
+Unlabelled square clouds, cross-object point pools and free scale cannot satisfy it.
 """
 
 import cv2
@@ -13,6 +13,38 @@ from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 
 from lidar_video.object_evidence import assess_depth, distinct_view, reprojection_agreement
+
+
+def construction_split(entry, data):
+    """Reject ambiguous roles and reused source viewpoints before any fitting."""
+    frames = [o["frame"] for o in entry.get("observations", [])]
+    contract = entry.get("validation", "instance-multiview-v1")
+    if contract == "instance-multiview-v1":
+        if "construction_frames" in entry or "validation_frames" in entry:
+            raise ValueError("Explicit construction splits require instance-multiview-v2")
+        return [entry["frame"]], [f for f in frames if f != entry["frame"]]
+    if contract != "instance-multiview-v2":
+        raise ValueError("Unknown learned-mesh validation contract")
+    training, held_out = entry.get("construction_frames"), entry.get("validation_frames")
+    if (
+        not isinstance(training, list)
+        or not isinstance(held_out, list)
+        or len(training) < 2
+        or not held_out
+        or any(type(f) is not int or not 0 <= f < len(data["depth"]) for f in training + held_out)
+        or len(set(training + held_out)) != len(training + held_out)
+        or len(set(frames)) != len(frames)
+        or set(training + held_out) != set(frames)
+        or entry["frame"] not in training
+    ):
+        raise ValueError(
+            "Construction and validation frames must partition all observations with a reserved view"
+        )
+    if not any(distinct_view(data, a, b) for a in training for b in training if a != b):
+        raise ValueError("Construction requires distinct camera viewpoints")
+    if not all(distinct_view(data, a, b) for a in training for b in held_out):
+        raise ValueError("Validation viewpoints must be distinct from every construction view")
+    return training, held_out
 
 
 def silhouette_iou(mesh, labels, label, data, calibration, frame):
@@ -52,6 +84,8 @@ def validate_and_align(mesh, entry, root, data, calibration):
         raise MeshQualityError("Need distinct instance-masked reference and held-out views")
     if any(type(frame) is not int or not 0 <= frame < len(data["depth"]) for frame in frames):
         raise ValueError("Invalid observation frame")
+    construction, held_out = construction_split(entry, data)
+    multiview = entry.get("validation") == "instance-multiview-v2"
     if not any(distinct_view(data, reference, frame) for frame in frames):
         raise MeshQualityError("Need a distinct held-out camera viewpoint")
     evidence = []
@@ -115,7 +149,7 @@ def validate_and_align(mesh, entry, root, data, calibration):
             views.append(
                 dict(
                     frame=o["frame"],
-                    role="training" if o["frame"] == reference else "held_out",
+                    role="training" if o["frame"] in construction else "held_out",
                     native_points=len(distances),
                     median_m=median,
                     p90_m=p90,
@@ -160,7 +194,7 @@ def validate_and_align(mesh, entry, root, data, calibration):
     # A large initial base offset alone must not trigger a destructive rotation
     # when the simple support correction already passes every unchanged gate.
     if not record(method, chosen, views):
-        training = next(o["cloud"] for o in evidence if o["frame"] == reference)
+        training = np.vstack([o["cloud"] for o in evidence if o["frame"] in construction])
         training = training[np.linspace(0, len(training) - 1, min(1200, len(training)), dtype=int)]
 
         def depth_residual(parameters):
@@ -177,7 +211,8 @@ def validate_and_align(mesh, entry, root, data, calibration):
             max_nfev=100,
         )
         parameters = np.r_[translation_fit.x, np.zeros(3)]
-        method = "reference_only_translation_with_held_out_validation"
+        prefix = "construction_views" if multiview else "reference_only"
+        method = prefix + "_translation_with_held_out_validation"
         chosen = transform(parameters)
         views = evaluate(chosen)
         if not record(method, chosen, views, translation_fit.success):
@@ -194,7 +229,7 @@ def validate_and_align(mesh, entry, root, data, calibration):
             fit = least_squares(
                 residual, parameters, bounds=(-bounds, bounds), loss="soft_l1", f_scale=0.004, max_nfev=100
             )
-            method = "reference_only_regularized_rigid_fit_with_held_out_validation"
+            method = prefix + "_regularized_rigid_fit_with_held_out_validation"
             chosen = transform(fit.x)
             views = evaluate(chosen)
             if not record(method, chosen, views, fit.success):
@@ -204,12 +239,16 @@ def validate_and_align(mesh, entry, root, data, calibration):
                         original_views=original_views,
                         attempts=attempts,
                         reference_frame=reference,
+                        construction_frames=construction,
+                        validation_frames=held_out,
                         scale_reapplied=False,
                     ),
                 )
     mesh.apply_transform(chosen)
     return mesh, dict(
-        validation="instance-multiview-v1",
+        validation=entry.get("validation", "instance-multiview-v1"),
+        construction_frames=construction,
+        validation_frames=held_out,
         method=method,
         scale_reapplied=False,
         board_refinement=chosen.tolist(),

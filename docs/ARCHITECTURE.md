@@ -11,6 +11,7 @@ The package preserves measured camera-axis depth in metres and uses OpenCV camer
 - `board_calibration.py`, `annotated_board.py`: board fitting, orientation ambiguity and annotation-assisted static-view alignment.
 - `reconstruction.py`: square-associated depth collections, learned mesh validation, explicit convex completion fallback and shared scene construction.
 - `object_evidence.py`: unique native-depth samples, eroded-core reliability gates and mutual cross-view mask reprojection.
+- `multiview_completion.py`: explicit construction/validation splits and physical-prior-constrained silhouette completion.
 - `mesh_alignment.py`: staged support correction, reference-only translation and orientation-regularized rigid refinement, with per-view depth and silhouette acceptance.
 - `gpu_reconstruction.py`: A100 enforcement, upstream SAM 3 detection, ambiguous-instance handling and SAM 3D jobs.
 - `geometry.py`, `pipeline.py`: original tabletop reconstruction and measured-depth export to RoboSkills.

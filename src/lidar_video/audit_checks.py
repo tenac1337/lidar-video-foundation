@@ -100,8 +100,13 @@ def _geometry(case, root, graph):
         raise ValueError("Unsupported learned-mesh manifest")
     if set(entries) != set(case["expected_objects"]) or not entries:
         raise ValueError("Manifest must contain every expected object exactly once")
-    if any(e.get("validation") != "instance-multiview-v1" for e in entries.values()):
-        raise ValueError("Every learned mesh requires instance-multiview-v1; legacy evidence is rejected")
+    if any(
+        e.get("validation") not in ("instance-multiview-v1", "instance-multiview-v2")
+        for e in entries.values()
+    ):
+        raise ValueError(
+            "Every learned mesh requires instance-multiview-v1 or v2; legacy evidence is rejected"
+        )
     if not case.get("capture") or not case.get("calibration"):
         return _result("blocked", "geometry.inputs_missing", "Capture and saved calibration are required")
     import chess
