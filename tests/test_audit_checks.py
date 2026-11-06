@@ -341,9 +341,7 @@ def test_rich_node_metadata_survives_fresh_scenic_sampling_with_position_variati
 def test_samples_preserve_relationships_and_coordinate_metadata(scene, tmp_path, mutation):
     folder, graph, case = scene
     graph["frame"] = "fixture_frame"
-    graph["nodes"].extend(
-        dict(id=name, kind="square", position_m=[0, 0, 0]) for name in ("f3", "a1")
-    )
+    graph["nodes"].extend(dict(id=name, kind="square", position_m=[0, 0, 0]) for name in ("f3", "a1"))
     graph["edges"].extend(
         [
             dict(source="left", relation="occupies", target="f3", evidence="fixture"),
@@ -378,3 +376,31 @@ def test_samples_preserve_relationships_and_coordinate_metadata(scene, tmp_path,
             word in result["exports"]["findings"][0]["summary"]
             for word in ("relationships", "graph metadata")
         )
+
+
+@pytest.mark.parametrize("samples", [[], None, {}, "samples"])
+def test_empty_or_nonlist_samples_cannot_validate(scene, samples):
+    from lidar_video.audit_checks import _validate_exports_samples
+
+    _, graph, case = scene
+    with pytest.raises(ValueError, match="nonempty list"):
+        _validate_exports_samples(samples, graph, case["expected_objects"])
+
+
+@pytest.mark.parametrize("count", [0, 1, 3])
+def test_successful_sampler_with_wrong_count_cannot_pass(scene, tmp_path, monkeypatch, count):
+    from types import SimpleNamespace
+
+    from lidar_video import audit_checks
+
+    folder, graph, case = scene
+    out = tmp_path / "fresh-audit"
+    out.mkdir()
+
+    def fake_run(args, **kwargs):
+        Path(args[-1]).write_text(json.dumps({"samples": [copy.deepcopy(graph) for _ in range(count)]}))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(audit_checks.subprocess, "run", fake_run)
+    with pytest.raises(ValueError, match="nonempty list|exactly 2"):
+        audit_checks._exports(graph, folder, case["expected_objects"], out)

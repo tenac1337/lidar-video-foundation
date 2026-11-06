@@ -396,18 +396,23 @@ def _exports(graph, scene, expected, out):
     (out / "scenic_compile.log").write_text(completed.stdout + completed.stderr)
     if completed.returncode:
         raise ValueError("Fresh Scenic compilation/sampling failed; see scenic_compile.log")
-    _validate_exports_samples(json.loads(target.read_text())["samples"], graph, expected)
+    fresh = json.loads(target.read_text())["samples"]
+    _validate_exports_samples(fresh, graph, expected, expected_count=2)
     return _result(
         "pass",
         "exports.shared_ids",
         "Saved and fresh Scenic samples preserve graph identities, metadata and sizes",
-        dict(saved_samples=len(samples), fresh_samples=2, log="scenic_compile.log"),
+        dict(saved_samples=len(samples), fresh_samples=len(fresh), log="scenic_compile.log"),
     )
 
 
-def _validate_exports_samples(samples, graph, expected):
+def _validate_exports_samples(samples, graph, expected, *, expected_count=None):
     from lidar_video.scenic_export import validate_sample
 
+    if not isinstance(samples, list) or not samples:
+        raise ValueError("Scenic samples must be a nonempty list")
+    if expected_count is not None and len(samples) != expected_count:
+        raise ValueError(f"Expected exactly {expected_count} fresh Scenic samples")
     source_nodes = {n["id"]: n for n in graph["nodes"]}
     dimensions = {n["id"]: n["size_m"] for n in graph["nodes"] if n["kind"] in ("object", "support")}
     for sample in samples:

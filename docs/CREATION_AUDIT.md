@@ -72,3 +72,5 @@ Other backends can implement the same interface: argv is executed without a shel
 The workflow design follows [Gym-Anything for Robotics](https://arxiv.org/html/2610.40565v1) and its [creation/audit implementation](https://github.com/gym-anything/robotics/tree/main/src/gym_anything_robotics/creation_audit). This implementation is original and scoped to our existing pipeline; it does not copy their launchers or use their permission-bypass flags.
 
 The Codex adapters follow [official non-interactive CLI documentation](https://learn.chatgpt.com/docs/non-interactive-mode). The automated checks and reports remain provider-independent.
+
+Fresh Scenic export checks require a nonempty list with exactly the requested two samples. The finalizer binds every supporting artifact under `checks/`, including the fresh samples, compile log and per-role sidecars. Missing, modified or newly added supporting files invalidate the decision even when reviews cite only `checks.json`. Earlier audit locks without supporting-evidence hashes must be regenerated; they are not accepted implicitly.

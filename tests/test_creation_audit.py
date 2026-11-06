@@ -356,3 +356,46 @@ def test_policy_change_invalidates_even_unanimous_reviews(case, tmp_path, monkey
     reviews(run)
     policy.write_text("weakened")
     assert audit.finalize(run)["status"] == "invalid"
+
+
+@pytest.mark.parametrize("mutation", ["delete", "change", "add"])
+def test_supporting_check_artifacts_are_required_and_frozen(case, tmp_path, monkeypatch, mutation):
+    from lidar_video import audit_checks
+
+    def run_checks(c, root, out):
+        out.mkdir()
+        audit.save(out / "fresh_scenic_samples.json", {"samples": [{"fixture": 1}, {"fixture": 2}]})
+        (out / "scenic_compile.log").write_text("Executed fixture sampler")
+        return {
+            role: dict(status="pass", findings=[dict(id="exports.shared_ids")] if role == "exports" else [])
+            for role in audit.ROLES
+        }
+
+    monkeypatch.setattr(audit_checks, "run_checks", run_checks)
+    run = tmp_path / "run"
+    audit.prepare(case, run)
+    reviews(run)
+    assert audit.finalize(run)["status"] == "accepted"
+    path = run / "checks/fresh_scenic_samples.json"
+    if mutation == "delete":
+        path.unlink()
+    elif mutation == "change":
+        audit.save(path, {"samples": []})
+    else:
+        (run / "checks/extra.json").write_text("{}")
+    assert audit.finalize(run)["status"] == "invalid"
+
+
+def test_pass_cannot_be_prepared_without_claimed_sample_artifact(case, tmp_path, monkeypatch):
+    from lidar_video import audit_checks
+
+    monkeypatch.setattr(
+        audit_checks,
+        "run_checks",
+        lambda *args: {
+            role: dict(status="pass", findings=[dict(id="exports.shared_ids")] if role == "exports" else [])
+            for role in audit.ROLES
+        },
+    )
+    with pytest.raises(ValueError, match="Missing supporting export evidence"):
+        audit.prepare(case, tmp_path / "run")
