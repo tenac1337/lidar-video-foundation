@@ -73,6 +73,8 @@ Open `notebooks/chess_reconstruction_colab.ipynb` in Colab, select A100, add an 
 
 Use [frozen evaluation](docs/EVALUATION.md) to split captures, bind predictions and score fixed meshes without fitting or repair. [Export comparisons](docs/EXPORT_COMPARISON.md) run readability, geometry and consistency policies on the same export, with generated contract fixtures and explicit blocked-decision counts.
 
+Use a [locked reconstruction recipe](docs/RECONSTRUCTION_RUN.md) to validate and bind the capture, calibration, assigned masks, source-frame selection, candidates and settings before a development replay. Execution checks the resulting object inventory and Scenic exports without parameter overrides.
+
 ```sh
 python -m pytest tests -q
 ruff check src scripts tests
