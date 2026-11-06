@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from lidar_video.audit_checks import _link_aligned_mesh, run_checks, validate_graph
-from lidar_video.scenic_export import export_scenic
+from lidar_video.scenic_export import export_scenic, sample_scenic
 
 
 @pytest.fixture
@@ -24,8 +24,8 @@ def scene(tmp_path):
     folder = tmp_path / "scene"
     folder.mkdir()
     (folder / "scene_graph.json").write_text(json.dumps(graph))
-    (folder / "scenic_samples.json").write_text(json.dumps(dict(samples=[graph])))
     export_scenic(graph, folder / "scenario.scenic", jitter=0.001)
+    sample_scenic(folder / "scenario.scenic", graph, folder / "scenic_samples.json", count=1, seed=7)
     (folder / "simulation").mkdir()
     (folder / "simulation" / "scene.xml").write_text(
         '<mujoco><default><geom friction="0.8 0.005 0.0001"/></default>'
@@ -326,7 +326,7 @@ def test_rich_node_metadata_survives_fresh_scenic_sampling_with_position_variati
     graph["nodes"][2].update(square="d5", symbol="K", evidence={"source": "fixture"}, mass_kg=0.08)
     case["expected_objects"] = ["f3", "d5"]
     (folder / "scene_graph.json").write_text(json.dumps(graph))
-    (folder / "scenic_samples.json").write_text(json.dumps(dict(samples=[graph])))
+    sample_scenic(folder / "scenario.scenic", graph, folder / "scenic_samples.json", count=1, seed=7)
     result = run_checks(case, tmp_path, tmp_path / "audit")
     assert result["exports"]["status"] == "pass"
     fresh = json.loads((tmp_path / "audit/fresh_scenic_samples.json").read_text())["samples"][0]
@@ -350,7 +350,9 @@ def test_samples_preserve_relationships_and_coordinate_metadata(scene, tmp_path,
         ]
     )
     (folder / "scene_graph.json").write_text(json.dumps(graph))
-    sample = copy.deepcopy(graph)
+    sample_scenic(folder / "scenario.scenic", graph, folder / "scenic_samples.json", count=1, seed=7)
+    record = json.loads((folder / "scenic_samples.json").read_text())
+    sample = record["samples"][0]
     if mutation == "occupancy":
         sample["edges"][2]["target"] = "a1"
     elif mutation == "missing_relation":
@@ -366,7 +368,7 @@ def test_samples_preserve_relationships_and_coordinate_metadata(scene, tmp_path,
         for edge in sample["edges"]:
             if edge["relation"] == "on":
                 edge["evidence"] = "sampled_constraint"
-    (folder / "scenic_samples.json").write_text(json.dumps(dict(samples=[sample])))
+    (folder / "scenic_samples.json").write_text(json.dumps(record))
     result = run_checks(case, tmp_path, tmp_path / "audit")
     assert result["geometry"]["status"] == "pass"
     assert result["physics"]["status"] == "pass"
@@ -398,9 +400,24 @@ def test_successful_sampler_with_wrong_count_cannot_pass(scene, tmp_path, monkey
     out.mkdir()
 
     def fake_run(args, **kwargs):
-        Path(args[-1]).write_text(json.dumps({"samples": [copy.deepcopy(graph) for _ in range(count)]}))
+        Path(args[5]).write_text(json.dumps({"samples": [copy.deepcopy(graph) for _ in range(count)]}))
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(audit_checks.subprocess, "run", fake_run)
     with pytest.raises(ValueError, match="nonempty list|exactly 2"):
         audit_checks._exports(graph, folder, case["expected_objects"], out)
+
+
+def test_saved_sample_inside_support_but_outside_program_range_is_rejected(scene, tmp_path):
+    folder, graph, case = scene
+    path = folder / "scenic_samples.json"
+    record = json.loads(path.read_text())
+    node = next(n for n in record["samples"][0]["nodes"] if n["id"] == "left")
+    node["position_m"][0] = -0.064  # On support, but outside +/-1mm Scenic jitter.
+    path.write_text(json.dumps(record))
+    from lidar_video.audit_checks import _validate_exports_samples
+
+    _validate_exports_samples(record["samples"], graph, case["expected_objects"])
+    result = run_checks(case, tmp_path, tmp_path / "audit")
+    assert result["exports"]["status"] == "fail"
+    assert "program replay" in result["exports"]["findings"][0]["summary"]

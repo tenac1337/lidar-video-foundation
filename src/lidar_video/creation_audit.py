@@ -97,7 +97,7 @@ def supporting_evidence(out, checks):
     if exports.get("status") == "pass" and any(
         f.get("id") == "exports.shared_ids" for f in exports.get("findings", [])
     ):
-        for name in ("fresh_scenic_samples.json", "scenic_compile.log"):
+        for name in ("fresh_scenic_samples.json", "replayed_scenic_samples.json", "scenic_compile.log"):
             if not (folder / name).is_file():
                 raise ValueError(f"Missing supporting export evidence: {name}")
     return {str(p.resolve()): digest(p) for p in sorted(folder.rglob("*")) if p.is_file()}

@@ -376,19 +376,36 @@ def _exports(graph, scene, expected, out):
                     raise ValueError("Export contains an invalid mesh")
                 if np.any(np.abs(mesh.bounds) > np.array(node["size_m"]) / 2 + 1e-6):
                     raise ValueError("Export mesh exceeds graph dimensions")
-    samples = json.loads(saved.read_text()).get("samples", [])
+    saved_record = json.loads(saved.read_text())
+    samples = saved_record.get("samples", [])
     if not samples:
         raise ValueError("Saved Scenic samples are empty")
     _validate_exports_samples(samples, graph, expected)
+    seed, count = saved_record.get("seed"), saved_record.get("count")
+    if type(seed) is not int or type(count) is not int or count != len(samples):
+        raise ValueError("Saved Scenic samples require an integer seed and matching count for program replay")
     # Scenic programs are executable Python-adjacent input. Audit only trusted project files;
     # this subprocess provides a timeout, not an untrusted-code security sandbox.
     target = out / "fresh_scenic_samples.json"
+    replay_target = out / "replayed_scenic_samples.json"
     code = (
         "import json,sys; from lidar_video.scenic_export import sample_scenic; "
-        "sample_scenic(sys.argv[1],json.load(open(sys.argv[2])),sys.argv[3],count=2,seed=17)"
+        "graph=json.load(open(sys.argv[2])); "
+        "sample_scenic(sys.argv[1],graph,sys.argv[3],count=2,seed=17); "
+        "sample_scenic(sys.argv[1],graph,sys.argv[4],count=int(sys.argv[5]),seed=int(sys.argv[6]))"
     )
     completed = subprocess.run(
-        [sys.executable, "-c", code, str(program), str(scene / "scene_graph.json"), str(target)],
+        [
+            sys.executable,
+            "-c",
+            code,
+            str(program),
+            str(scene / "scene_graph.json"),
+            str(target),
+            str(replay_target),
+            str(count),
+            str(seed),
+        ],
         capture_output=True,
         text=True,
         timeout=60,
@@ -398,11 +415,37 @@ def _exports(graph, scene, expected, out):
         raise ValueError("Fresh Scenic compilation/sampling failed; see scenic_compile.log")
     fresh = json.loads(target.read_text())["samples"]
     _validate_exports_samples(fresh, graph, expected, expected_count=2)
+    replayed = json.loads(replay_target.read_text())["samples"]
+    _validate_exports_samples(replayed, graph, expected, expected_count=count)
+    for actual, replay in zip(samples, replayed):
+        # Replay the actual program, rather than inferring its distribution from
+        # support bounds or trusting a sample's self-reported variation metadata.
+        comparable = copy.deepcopy(actual)
+        if len(actual["nodes"]) != len(replay["nodes"]):
+            raise ValueError("Saved Scenic sample disagrees with program replay")
+        replay_nodes = {n["id"]: n for n in replay["nodes"]}
+        for node, copied in zip(actual["nodes"], comparable["nodes"]):
+            expected_node = replay_nodes[node["id"]]
+            if node.get("position_m") is not None:
+                if not np.allclose(node["position_m"], expected_node.get("position_m"), atol=1e-8, rtol=0):
+                    raise ValueError("Saved Scenic position disagrees with program replay")
+                copied["position_m"] = expected_node["position_m"]
+        reference = copy.deepcopy(replay)
+        for record in (comparable, reference):
+            record["nodes"] = sorted(record["nodes"], key=lambda n: n["id"])
+            record["edges"] = sorted(record["edges"], key=lambda e: json.dumps(e, sort_keys=True))
+        if comparable != reference:
+            raise ValueError("Saved Scenic sample metadata disagrees with program replay")
     return _result(
         "pass",
         "exports.shared_ids",
         "Saved and fresh Scenic samples preserve graph identities, metadata and sizes",
-        dict(saved_samples=len(samples), fresh_samples=len(fresh), log="scenic_compile.log"),
+        dict(
+            saved_samples=len(samples),
+            fresh_samples=len(fresh),
+            replayed_samples=len(replayed),
+            log="scenic_compile.log",
+        ),
     )
 
 

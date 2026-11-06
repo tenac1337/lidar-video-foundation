@@ -365,6 +365,7 @@ def test_supporting_check_artifacts_are_required_and_frozen(case, tmp_path, monk
     def run_checks(c, root, out):
         out.mkdir()
         audit.save(out / "fresh_scenic_samples.json", {"samples": [{"fixture": 1}, {"fixture": 2}]})
+        audit.save(out / "replayed_scenic_samples.json", {"samples": [{"fixture": 1}]})
         (out / "scenic_compile.log").write_text("Executed fixture sampler")
         return {
             role: dict(status="pass", findings=[dict(id="exports.shared_ids")] if role == "exports" else [])
