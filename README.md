@@ -47,9 +47,12 @@ Commands refuse to overwrite existing result directories; choose a new output pa
 
 ## Use an iPhone recording
 
+Start with the read-only [capture intake check](docs/CAPTURE_INTAKE.md), which validates the complete export and can check a source-frame split plan.
+
 ```sh
-lidar-video import-stray /path/to/stray-export --out runs/imported --fps 2
-lidar-video validate runs/imported/capture.npz
+lidar-video inspect-stray /path/to/stray-export --out runs/intake.json --fps 2 && \
+lidar-video import-stray /path/to/stray-export --out runs/imported --fps 2 && \
+lidar-video validate runs/imported/capture.npz && \
 lidar-video chess-reconstruct runs/imported/capture.npz \
   --auto-calibrate --out runs/reconstructed --no-simulation
 ```
