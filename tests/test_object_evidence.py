@@ -450,3 +450,55 @@ def test_translation_candidate_is_fit_without_heldout_points(tmp_path):
     assert changed_evidence["views"][1]["median_m"] != evidence["views"][1]["median_m"]
     translation = next(a for a in attempts if a["method"] == candidate["method"])
     np.testing.assert_allclose(translation["matrix"], candidate["matrix"], atol=1e-12)
+
+
+def test_reference_refinement_preserves_inputs_and_cannot_use_or_bypass_other_views(tmp_path):
+    from pathlib import Path
+
+    from lidar_video.creation_audit import digest, read_json, save
+    from lidar_video.reconstruction import import_learned_mesh
+    from lidar_video.silhouette_refinement import refine_case
+
+    mesh, entry, data, cal = aligned_fixture(tmp_path)
+    mesh.export(tmp_path / "mesh.ply")
+    save(tmp_path / "pose.json", {"camera_from_object": np.linalg.inv(data["world_from_camera"][0]).tolist()})
+    entry.update(mesh="mesh.ply", pose="pose.json", validation="instance-multiview-v1")
+    save(tmp_path / "meshes.json", {"schema": "roboskills-chess-meshes-v1", "objects": {"e5": entry}})
+    np.savez_compressed(tmp_path / "capture.npz", **data)
+    save(tmp_path / "calibration.json", cal)
+    case = dict(
+        schema="creation-audit-case-v1",
+        evaluation_scope="development",
+        geometry_scope="measured",
+        capture="capture.npz",
+        calibration="calibration.json",
+        mesh_manifest="meshes.json",
+        expected_objects=["e5"],
+    )
+    save(tmp_path / "case.json", case)
+    originals = {str(p): digest(p) for p in tmp_path.iterdir() if p.is_file()}
+    report = refine_case(tmp_path / "case.json", tmp_path / "first")
+    assert report["objects"]["e5"]["construction_frames"] == [0]
+    assert report["objects"]["e5"]["accepted"] is False
+    assert {path: digest(path) for path in originals} == originals
+    candidate_case = read_json(report["case"])
+    assert candidate_case["expected_objects"] == ["e5"]
+    updated = read_json(candidate_case["mesh_manifest"])["objects"]["e5"]
+    assert Path(updated["pose"]).read_bytes() == (tmp_path / "pose.json").read_bytes()
+    assert all(Path(o["mask"]).is_absolute() for o in updated["observations"])
+    _, evidence = import_learned_mesh(dict(updated, square="e5"), tmp_path / "first", data, cal, [])
+    assert len(evidence["views"]) == 3
+    assert all(view["passed"] for view in evidence["views"])
+    with pytest.raises(FileExistsError):
+        refine_case(tmp_path / "case.json", tmp_path / "first")
+
+    # Both other masks and depth change; reference-only candidate bytes must not.
+    for observation in entry["observations"][1:]:
+        Image.fromarray(np.ones((80, 80), dtype=np.uint16)).save(tmp_path / observation["mask"])
+    data["depth"][1:] = 1.0
+    np.savez_compressed(tmp_path / "capture.npz", **data)
+    changed = refine_case(tmp_path / "case.json", tmp_path / "second")
+    assert changed["objects"]["e5"]["output_mesh_sha256"] == report["objects"]["e5"]["output_mesh_sha256"]
+    other = read_json(tmp_path / "second/meshes.json")["objects"]["e5"]
+    with pytest.raises(MeshQualityError, match="Unreliable object depth"):
+        import_learned_mesh(dict(other, square="e5"), tmp_path / "second", data, cal, [])

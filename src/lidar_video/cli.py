@@ -7,6 +7,10 @@ def main():
     parser = argparse.ArgumentParser(description="RGB-D to RoboSkills simulation, scene graph, and Scenic")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
+    p = sub.add_parser("refine-silhouettes")
+    p.add_argument("case", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--pitch-m", type=float, default=0.001)
     for name in ("audit-prepare", "audit-loop"):
         p = sub.add_parser(name)
         p.add_argument("case", type=Path)
@@ -104,6 +108,10 @@ def main():
                     rounds=args.rounds,
                     timeout=args.timeout,
                 )
+        elif args.command == "refine-silhouettes":
+            from lidar_video.silhouette_refinement import refine_case
+
+            result = refine_case(args.case, args.out, pitch=args.pitch_m)
         elif args.command == "import-stray":
             from lidar_video.stray import import_stray
 
