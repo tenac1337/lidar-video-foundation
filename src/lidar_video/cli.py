@@ -11,6 +11,11 @@ def main():
     p.add_argument("case", type=Path)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--pitch-m", type=float, default=0.001)
+    p = sub.add_parser("complete-multiview")
+    p.add_argument("case", type=Path)
+    p.add_argument("--plan", type=Path, required=True)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--pitch-m", type=float, default=0.001)
     for name in ("audit-prepare", "audit-loop"):
         p = sub.add_parser(name)
         p.add_argument("case", type=Path)
@@ -112,6 +117,10 @@ def main():
             from lidar_video.silhouette_refinement import refine_case
 
             result = refine_case(args.case, args.out, pitch=args.pitch_m)
+        elif args.command == "complete-multiview":
+            from lidar_video.multiview_completion import complete_case
+
+            result = complete_case(args.case, args.plan, args.out, pitch=args.pitch_m)
         elif args.command == "import-stray":
             from lidar_video.stray import import_stray
 

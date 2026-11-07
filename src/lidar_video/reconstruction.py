@@ -138,11 +138,13 @@ def import_learned_mesh(entry, root, data, calibration, observed):
     transform = rigid(calibration["board_from_world"], "board_from_world")
     mesh.apply_transform(transform @ data["world_from_camera"][frame] @ camera_from_object)
     if "validation" in entry:
-        if entry["validation"] != "instance-multiview-v1":
+        if entry["validation"] not in ("instance-multiview-v1", "instance-multiview-v2"):
             raise ValueError("Unknown learned-mesh validation contract")
         from lidar_video.mesh_alignment import validate_and_align
 
         mesh, evidence = validate_and_align(mesh, entry, root, data, calibration)
+        if entry.get("completion"):
+            evidence["completion"] = entry["completion"]
         return mesh, dict(evidence, source=str(source))
     # Keep input scale; reject gross registration errors instead of hiding them with rescaling.
     probes, _ = trimesh.sample.sample_surface(mesh, 10000, seed=0)
@@ -294,6 +296,8 @@ def reconstruct(
             else:
                 accepted.append(name)
                 geometry = "imported SAM 3D mesh; CoACD collision parts"
+                if entries[name].get("completion"):
+                    geometry = "SAM 3D prior with multiview silhouette and physical-prior completion; CoACD collision parts"
                 evidence["learned_mesh"] = learned
         if mesh is None:
             mesh = completed_hull(points[square])

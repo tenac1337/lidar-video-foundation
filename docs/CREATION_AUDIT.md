@@ -33,7 +33,7 @@ Paths resolve relative to the case JSON. Use a new output directory for every ru
 }
 ```
 
-The mesh manifest retains `roboskills-chess-meshes-v1` and per-entry `instance-multiview-v1` contracts. All observation masks, candidate meshes/poses, capture and calibration are hashed. Every expected object must be present; an empty or partial manifest cannot pass. The optional `scene_dir` points to the matching reconstruction output containing `scene_graph.json`, `scenario.scenic`, `scenic_samples.json`, assets and `simulation/scene.xml`. An absent scene blocks downstream checks.
+The mesh manifest retains `roboskills-chess-meshes-v1` and per-entry `instance-multiview-v1` or explicit-split `instance-multiview-v2` contracts (see [multiview completion](MULTIVIEW_COMPLETION.md)). All observation masks, candidate meshes/poses, capture and calibration are hashed. Every expected object must be present; an empty or partial manifest cannot pass. The optional `scene_dir` points to the matching reconstruction output containing `scene_graph.json`, `scenario.scenic`, `scenic_samples.json`, assets and `simulation/scene.xml`. An absent scene blocks downstream checks.
 
 For synthetic fixtures use `geometry_scope: "synthetic_fixture"`, `scene_dir`, and the exact expected object names. Do not supply capture, calibration or mesh manifest. A synthetic pass says nothing about real sensor reconstruction.
 
@@ -72,3 +72,7 @@ Other backends can implement the same interface: argv is executed without a shel
 The workflow design follows [Gym-Anything for Robotics](https://arxiv.org/html/2610.40565v1) and its [creation/audit implementation](https://github.com/gym-anything/robotics/tree/main/src/gym_anything_robotics/creation_audit). This implementation is original and scoped to our existing pipeline; it does not copy their launchers or use their permission-bypass flags.
 
 The Codex adapters follow [official non-interactive CLI documentation](https://learn.chatgpt.com/docs/non-interactive-mode). The automated checks and reports remain provider-independent.
+
+Fresh Scenic export checks require a nonempty list with exactly the requested two samples. The finalizer binds every supporting artifact under `checks/`, including the fresh samples, compile log and per-role sidecars. Missing, modified or newly added supporting files invalidate the decision even when reviews cite only `checks.json`. Earlier audit locks without supporting-evidence hashes must be regenerated; they are not accepted implicitly.
+
+Saved samples must retain their integer seed and matching count. Export auditing re-executes the actual Scenic program with that seed, checks the generated count, and compares positions (1e-8 m tolerance) and metadata with the saved samples. This rejects placements outside the declared distribution even when board containment passes. Node and edge ordering are treated as semantically irrelevant. The replay artifact is required and hash-bound alongside fresh samples. Regenerate older sample files without seed/count provenance.

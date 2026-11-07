@@ -90,6 +90,19 @@ def policy_hashes():
     return {str(p): digest(p) for p in sorted(Path(__file__).parent.glob("*.py"))}
 
 
+def supporting_evidence(out, checks):
+    """Bind actual check artifacts, not just aggregate verdicts and reviewer citations."""
+    folder = Path(out) / "checks"
+    exports = checks.get("exports", {})
+    if exports.get("status") == "pass" and any(
+        f.get("id") == "exports.shared_ids" for f in exports.get("findings", [])
+    ):
+        for name in ("fresh_scenic_samples.json", "replayed_scenic_samples.json", "scenic_compile.log"):
+            if not (folder / name).is_file():
+                raise ValueError(f"Missing supporting export evidence: {name}")
+    return {str(p.resolve()): digest(p) for p in sorted(folder.rglob("*")) if p.is_file()}
+
+
 def verify_hashes(expected):
     for path, value in expected.items():
         current = digest(path) if Path(path).is_file() else None
@@ -117,6 +130,7 @@ def prepare(case_file, out):
     verify_hashes(evidence)
     verify_hashes(policy)
     save(out / "checks.json", checks)
+    supporting = supporting_evidence(out, checks)
     round_id = uuid.uuid4().hex
     (out / "reviews").mkdir()
     (out / "packets").mkdir()
@@ -162,6 +176,7 @@ def prepare(case_file, out):
             "packets": packets,
             "case_sha256": digest(out / "case.json"),
             "checks_sha256": digest(out / "checks.json"),
+            "supporting_evidence": supporting,
         },
     )
     return finalize(out)
@@ -180,6 +195,9 @@ def finalize(out):
             {str(out / "case.json"): lock["case_sha256"], str(out / "checks.json"): lock["checks_sha256"]}
         )
         checks = read_json(out / "checks.json")
+        verify_hashes(lock["supporting_evidence"])
+        if supporting_evidence(out, checks) != lock["supporting_evidence"]:
+            raise ValueError("Supporting check evidence file set changed")
         reviews, missing = {}, []
         for role in ROLES:
             packet = out / "packets" / f"{role}.json"

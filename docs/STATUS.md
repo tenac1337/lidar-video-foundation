@@ -61,3 +61,11 @@ The local suite has 95 passing tests. The exact production helper was used for G
 - Profiling scripts target the saved 256×192 native / 960×720 model-input contract and require externally supplied run artifacts.
 
 Original local reports retain the detailed run evidence. No raw capture, diagnostic image containing the recording, neural mesh, checkpoint or executed notebook is included in this repository.
+
+## Explicit multiview completion development case
+
+A fresh A100-SXM4-40GB run restored model access and generated eight frame-0 candidates; reference-only upstream ranking selected seed 0. That raw candidate and reference-only carving both failed other-view silhouettes. Completion now has an opt-in V2 contract which declares construction and reserved validation views rather than calling every non-reference image held out.
+
+The separate b8 development case starts again from the raw seed-0 mesh. Frames 0/7 construct its silhouette-constrained volume, while frame 3 is excluded from construction. Below-board and out-of-square completion are removed under explicit board-plane and assigned-square physical priors. f8 is unchanged. All numerical geometry checks pass for these two objects; b8's reserved frame has IoU 0.661 and median/p90 surface distances 5.4/13.2 mm. A full-resolution diagnostic gives IoUs 0.828/0.655/0.507 across frames 0/3/7, so the last view has little margin. These are development views inspected in previous experiments, not an untouched evaluation.
+
+Strict reconstruction exported a shared scene graph, MuJoCo scene/video and Scenic program with 20 samples. Numerical geometry, physics, export and adversarial checks pass. Passive replay checked 29 intervals with zero state replay error; maximum reported contact penetration was approximately 1.145 mm. This is a two-object scene, not a recovered full chessboard. Piece recognition, real robot manipulation, absolute sensor accuracy and physical board orientation remain unverified. The local suite has 183 passing tests, including regressions for fresh-sample counts, sampling-program replay and supporting-evidence integrity discovered during independent adversarial review. See [the construction and validation contract](MULTIVIEW_COMPLETION.md).
