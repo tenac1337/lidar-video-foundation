@@ -372,8 +372,15 @@ def _exports(graph, scene, expected, out):
                 if not path.is_relative_to(scene.resolve()):
                     raise ValueError("Export asset escapes scene directory")
                 mesh = trimesh.load(path, force="mesh")
-                if not len(mesh.faces) or not np.isfinite(mesh.vertices).all():
-                    raise ValueError("Export contains an invalid mesh")
+                if (
+                    not isinstance(mesh, trimesh.Trimesh)
+                    or not len(mesh.vertices)
+                    or not len(mesh.faces)
+                    or not np.isfinite(mesh.vertices).all()
+                    or not np.isfinite(mesh.area)
+                    or mesh.area <= 0
+                ):
+                    raise ValueError("Export requires a finite nonzero-area mesh")
                 if np.any(np.abs(mesh.bounds) > np.array(node["size_m"]) / 2 + 1e-6):
                     raise ValueError("Export mesh exceeds graph dimensions")
     saved_record = json.loads(saved.read_text())
