@@ -68,6 +68,8 @@ Open `notebooks/chess_reconstruction_colab.ipynb` in Colab, select A100, add an 
 
 ## Development
 
+Use [frozen evaluation](docs/EVALUATION.md) to split captures, bind predictions and score fixed meshes without fitting or repair. [Export comparisons](docs/EXPORT_COMPARISON.md) run readability, geometry and consistency policies on the same export, with generated contract fixtures and explicit blocked-decision counts.
+
 ```sh
 python -m pytest tests -q
 ruff check src scripts tests

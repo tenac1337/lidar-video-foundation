@@ -7,6 +7,27 @@ def main():
     parser = argparse.ArgumentParser(description="RGB-D to RoboSkills simulation, scene graph, and Scenic")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
+    p = sub.add_parser("comparison-fixtures")
+    p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("export-seal")
+    p.add_argument("scene", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("export-compare")
+    p.add_argument("manifest", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("comparison-summarize")
+    p.add_argument("manifest", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("evaluation-split")
+    p.add_argument("capture", type=Path)
+    p.add_argument("--plan", type=Path, required=True)
+    p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("evaluation-freeze")
+    p.add_argument("case", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("evaluation-score")
+    p.add_argument("run", type=Path)
+    p.add_argument("--lock-sha256", required=True)
     p = sub.add_parser("refine-silhouettes")
     p.add_argument("case", type=Path)
     p.add_argument("--out", type=Path, required=True)
@@ -97,7 +118,33 @@ def main():
             p.add_argument("--no-simulation", action="store_true")
     args = parser.parse_args()
     try:
-        if args.command in ("audit-prepare", "audit-loop", "audit-finalize"):
+        if args.command == "comparison-fixtures":
+            from lidar_video.comparison_fixtures import generate_comparison_fixtures
+
+            result = generate_comparison_fixtures(args.out)
+        elif args.command in ("export-seal", "export-compare", "comparison-summarize"):
+            from lidar_video.comparison import compare_exports, seal_exports, summarize_comparisons
+
+            if args.command == "export-seal":
+                result = seal_exports(args.scene, args.out)
+            elif args.command == "export-compare":
+                result = compare_exports(args.manifest, args.out)
+            else:
+                result = summarize_comparisons(args.manifest, args.out)
+        elif args.command in ("evaluation-split", "evaluation-freeze", "evaluation-score"):
+            from lidar_video.evaluation import (
+                freeze_evaluation,
+                score_evaluation,
+                split_evaluation_capture,
+            )
+
+            if args.command == "evaluation-split":
+                result = split_evaluation_capture(args.capture, args.plan, args.out)
+            elif args.command == "evaluation-freeze":
+                result = freeze_evaluation(args.case, args.out)
+            else:
+                result = score_evaluation(args.run, expected_lock_sha256=args.lock_sha256)
+        elif args.command in ("audit-prepare", "audit-loop", "audit-finalize"):
             from lidar_video.creation_audit import finalize, prepare, read_json, run_loop
 
             if args.command == "audit-prepare":

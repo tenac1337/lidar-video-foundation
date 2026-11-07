@@ -101,6 +101,22 @@ def test_bad_scenic_program_is_recompiled_and_rejected(scene, tmp_path):
     assert (tmp_path / "audit/scenic_compile.log").stat().st_size > 0
 
 
+def test_missing_scenic_worker_dependency_is_blocked(scene, tmp_path, monkeypatch):
+    import os
+
+    import lidar_video
+
+    _, _, case = scene
+    shadow = tmp_path / "unavailable-runtime"
+    (shadow / "scenic").mkdir(parents=True)
+    (shadow / "scenic/__init__.py").write_text("raise ImportError('test missing runtime')\n")
+    source = Path(lidar_video.__file__).resolve().parent.parent
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(shadow), str(source)]))
+    result = run_checks(case, tmp_path, tmp_path / "audit")
+    assert result["exports"]["status"] == "blocked"
+    assert "test missing runtime" in (tmp_path / "audit/scenic_compile.log").read_text()
+
+
 def test_duplicate_raw_scenic_object_cannot_disappear_from_export(scene, tmp_path):
     from lidar_video.scenic_export import sample_scenic
 
