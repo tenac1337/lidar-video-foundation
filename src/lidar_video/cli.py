@@ -7,6 +7,13 @@ def main():
     parser = argparse.ArgumentParser(description="RGB-D to RoboSkills simulation, scene graph, and Scenic")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
+    p = sub.add_parser("scene-program")
+    p.add_argument("graph", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--randomize", action="store_true")
+    p.add_argument("--jitter", type=float, default=0.004)
+    p.add_argument("--samples", type=int, default=20)
+    p.add_argument("--seed", type=int, default=7)
     p = sub.add_parser("reconstruction-freeze")
     p.add_argument("config", type=Path)
     p.add_argument("--out", type=Path, required=True)
@@ -129,7 +136,18 @@ def main():
             p.add_argument("--no-simulation", action="store_true")
     args = parser.parse_args()
     try:
-        if args.command in ("reconstruction-freeze", "reconstruction-run"):
+        if args.command == "scene-program":
+            from lidar_video.scene_program import run_scene_program
+
+            result = run_scene_program(
+                json.loads(args.graph.read_text()),
+                args.out,
+                randomize=args.randomize,
+                jitter=args.jitter,
+                count=args.samples,
+                seed=args.seed,
+            )
+        elif args.command in ("reconstruction-freeze", "reconstruction-run"):
             from lidar_video.reconstruction_run import freeze_reconstruction, run_reconstruction
 
             try:
