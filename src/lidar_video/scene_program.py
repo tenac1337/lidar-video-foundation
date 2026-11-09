@@ -134,8 +134,9 @@ def compile_scene_program(graph, *, jitter=0.004):
     """Compile explicit box relations. Unknown relations/rotations fail closed.
 
     `on` means full XY containment and top-face contact (optional nonnegative
-    clearance_m); `inside` means full XYZ containment. Directional edges compare
-    box faces, with optional nonnegative gap_m. +Y is `in_front_of`.
+    clearance_m, or an explicit support_penetration_m); `inside` means full XYZ
+    containment. Directional edges compare box faces, with optional nonnegative
+    gap_m. +Y is `in_front_of`.
     `placement_bounds_m` bounds the object's center in world XYZ. Root supports
     default to fixed; other nodes default to +/- jitter around recorded centers.
     Set fixed=False and explicit bounds to randomize a root support.
@@ -198,6 +199,7 @@ def compile_scene_program(graph, *, jitter=0.004):
         bounds.extend(zip(lo, hi))
     width = 3 * len(order)
     inequalities, limits, equalities, targets = [], [], [], []
+    support_contacts = {}
 
     def constraint(a, b, axis, sign, limit, equality=False):
         row = np.zeros(width)
@@ -218,13 +220,20 @@ def compile_scene_program(graph, *, jitter=0.004):
         gap = float(edge.get("clearance_m" if relation == "on" else "gap_m", 0))
         if not np.isfinite(gap) or gap < 0:
             raise ValueError("Relation clearance/gap must be finite and nonnegative")
+        penetration = float(edge.get("support_penetration_m", 0))
+        if not np.isfinite(penetration) or penetration < 0:
+            raise ValueError("Support penetration must be finite and nonnegative")
+        if penetration and (relation != "on" or gap or penetration >= min(sizes[a][2], sizes[b][2])):
+            raise ValueError("Penetration allowance requires on, zero clearance and partial overlap")
+        if relation == "on":
+            support_contacts[frozenset((a, b))] = (a, b, penetration)
         if relation in ("on", "inside"):
             for axis in range(2 if relation == "on" else 3):
                 margin = (sizes[b][axis] - sizes[a][axis]) / 2 - (gap if relation == "inside" else 0)
                 for sign in (-1, 1):
                     constraint(a, b, axis, sign, margin)
             if relation == "on":
-                constraint(a, b, 2, 1, (sizes[a][2] + sizes[b][2]) / 2 + gap, equality=True)
+                constraint(a, b, 2, 1, (sizes[a][2] + sizes[b][2]) / 2 + gap - penetration, equality=True)
         else:
             axis, sign = directional[relation]
             constraint(a, b, axis, sign, -(sizes[a][axis] + sizes[b][axis]) / 2 - gap)
@@ -235,6 +244,15 @@ def compile_scene_program(graph, *, jitter=0.004):
     witnesses = []
     for a, b in combinations(order, 2):
         if nx.has_path(inside, a, b) or nx.has_path(inside, b, a):
+            continue
+        contact = support_contacts.get(frozenset((a, b)))
+        if contact:
+            child, parent, penetration = contact
+            witnesses.append(
+                dict(source=parent, target=child, axis="z", sign=1, support_penetration_m=penetration)
+            )
+            # The on equality already enforces separation/contact with the
+            # explicitly declared collision-envelope penetration. No extra gap.
             continue
         delta = positions[b] - positions[a]
         extents = (sizes[a] + sizes[b]) / 2
@@ -278,6 +296,13 @@ def export_constructive_scenic(graph, path, *, randomize=True, jitter=0.004):
             f"    with width {w!r}, with length {length!r}, with height {height!r},",
             f"    with objectId {name!r}, with requireVisible False, with allowCollisions True",
         ]
+        if "mesh_path" in nodes[name]:
+            # Metadata binds the proxy placement to the external native assets.
+            lines[-1] += ","
+            lines += [
+                f"    with meshPath {nodes[name]['mesh_path']!r},",
+                f"    with collisionPaths {tuple(nodes[name]['collision_paths'])!r}",
+            ]
     lines.append("ego = obj_0")
     Path(path).write_text("\n".join(lines) + "\n")
     return program
@@ -315,6 +340,11 @@ def run_scene_program(graph, out, *, randomize=False, jitter=0.004, count=20, se
                 obj = by_id[node["id"]]
                 if not np.allclose([obj.width, obj.length, obj.height], node["size_m"], rtol=0, atol=TOL):
                     raise ValueError("Scenic dimensions differ from graph")
+                if "mesh_path" in node and (
+                    obj.meshPath != node["mesh_path"]
+                    or tuple(obj.collisionPaths) != tuple(node["collision_paths"])
+                ):
+                    raise ValueError("Scenic asset bindings differ from graph")
                 node["position_m"] = list(obj.position)
             if randomize:
                 sample.update(source="constructive Scenic sample", tracks=[])

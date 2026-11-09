@@ -14,6 +14,16 @@ def main():
     p.add_argument("--jitter", type=float, default=0.004)
     p.add_argument("--samples", type=int, default=20)
     p.add_argument("--seed", type=int, default=7)
+    p = sub.add_parser("scene-program-assets")
+    p.add_argument("graph", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--randomize", action="store_true")
+    p.add_argument("--jitter", type=float, default=0.004)
+    p.add_argument("--samples", type=int, default=20)
+    p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--support-tolerance", type=float, default=0.0)
+    p.add_argument("--simulate", action="store_true")
+    p.add_argument("--frames", type=int, default=30)
     p = sub.add_parser("reconstruction-freeze")
     p.add_argument("config", type=Path)
     p.add_argument("--out", type=Path, required=True)
@@ -146,6 +156,20 @@ def main():
                 jitter=args.jitter,
                 count=args.samples,
                 seed=args.seed,
+            )
+        elif args.command == "scene-program-assets":
+            from lidar_video.scene_program_assets import run_asset_scene_program
+
+            result = run_asset_scene_program(
+                args.graph,
+                args.out,
+                randomize=args.randomize,
+                jitter=args.jitter,
+                count=args.samples,
+                seed=args.seed,
+                support_tolerance=args.support_tolerance,
+                simulate=args.simulate,
+                frames=args.frames,
             )
         elif args.command in ("reconstruction-freeze", "reconstruction-run"):
             from lidar_video.reconstruction_run import freeze_reconstruction, run_reconstruction
