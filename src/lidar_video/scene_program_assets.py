@@ -251,6 +251,7 @@ def run_asset_scene_program(
                     warnings=report["warnings"],
                     max_penetration_m=report["max_penetration_m"],
                     replay=replay,
+                    passive_motion=report["passive_motion"],
                 )
             )
     result.update(
