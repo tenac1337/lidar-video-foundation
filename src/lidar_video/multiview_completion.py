@@ -22,7 +22,7 @@ from lidar_video.object_evidence import assess_depth
 from lidar_video.reconstruction import rigid
 
 
-def constrained_carve(mesh, views, lower, upper, *, pitch=0.001, max_cells=4_000_000):
+def constrained_carve(mesh, views, lower, upper, *, pitch=0.001, max_cells=4_000_000, normal_field_path=None):
     """Intersect a learned volume with construction silhouettes and declared priors."""
     lower, upper = np.asarray(lower), np.asarray(upper)
     if lower.shape != (2,) or upper.shape != (2,) or not np.isfinite([lower, upper]).all():
@@ -98,10 +98,14 @@ def constrained_carve(mesh, views, lower, upper, *, pitch=0.001, max_cells=4_000
     if not candidate.is_watertight or not np.isfinite(candidate.vertices).all():
         raise ValueError("Completion did not produce a finite watertight candidate")
     evidence.update(occupied_voxels_after=int(keep.sum()), retained_fraction=float(keep.mean()))
+    if normal_field_path is not None:
+        from lidar_video.visual_normals import save_normal_field
+
+        evidence["normal_field"] = save_normal_field(normal_field_path, matrix, voxel.transform[:3, 3], pitch)
     return candidate, evidence
 
 
-def complete_case(case_file, plan_file, out, *, pitch=0.001):
+def complete_case(case_file, plan_file, out, *, pitch=0.001, save_normal_field=False):
     """Write a new complete manifest; explicitly transition selected entries to V2."""
     case = canonical_case(case_file)
     if case.get("geometry_scope") != "measured" or not all(
@@ -183,9 +187,16 @@ def complete_case(case_file, plan_file, out, *, pitch=0.001):
         square = chess.parse_square(name)
         center = (np.array([chess.square_file(square), chess.square_rank(square)]) - 3.5) * size
         center[1] += np.sign(center[1]) * gap / 2
-        candidate, record = constrained_carve(mesh, views, center - size / 2, center + size / 2, pitch=pitch)
         folder = out / "objects" / name
         folder.mkdir(parents=True)
+        candidate, record = constrained_carve(
+            mesh,
+            views,
+            center - size / 2,
+            center + size / 2,
+            pitch=pitch,
+            normal_field_path=folder / "normal_field.npz" if save_normal_field else None,
+        )
         candidate.apply_transform(np.linalg.inv(transform))
         candidate.export(folder / "mesh.ply")
         shutil.copyfile(entry["pose"], folder / "pose.json")

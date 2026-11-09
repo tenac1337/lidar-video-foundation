@@ -98,10 +98,14 @@ def test_reserved_mask_cannot_change_construction_but_can_reject_candidate(tmp_p
         },
     )
     (tmp_path / "plan.json").write_text(json.dumps(plan))
-    complete_case(tmp_path / "case.json", tmp_path / "plan.json", tmp_path / "first")
+    complete_case(tmp_path / "case.json", tmp_path / "plan.json", tmp_path / "first", save_normal_field=True)
     Image.fromarray(np.zeros_like(data["depth"][2], dtype=np.uint16)).save(tmp_path / "2.png")
-    complete_case(tmp_path / "case.json", tmp_path / "plan.json", tmp_path / "second")
+    complete_case(tmp_path / "case.json", tmp_path / "plan.json", tmp_path / "second", save_normal_field=True)
     assert digest(tmp_path / "first/objects/e5/mesh.ply") == digest(tmp_path / "second/objects/e5/mesh.ply")
+    with np.load(tmp_path / "first/objects/e5/normal_field.npz") as first:
+        with np.load(tmp_path / "second/objects/e5/normal_field.npz") as second:
+            for key in first.files:
+                np.testing.assert_array_equal(first[key], second[key])
     updated = json.loads((tmp_path / "second/meshes.json").read_text())["objects"]["e5"]
     with pytest.raises((ValueError, MeshQualityError), match="nonempty|Unreliable"):
         validate_and_align(mesh.copy(), updated, tmp_path, data, cal)

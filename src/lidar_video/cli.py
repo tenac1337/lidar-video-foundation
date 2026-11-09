@@ -60,11 +60,19 @@ def main():
     p.add_argument("case", type=Path)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--pitch-m", type=float, default=0.001)
+    p.add_argument("--save-normal-field", action="store_true")
     p = sub.add_parser("complete-multiview")
     p.add_argument("case", type=Path)
     p.add_argument("--plan", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--pitch-m", type=float, default=0.001)
+    p.add_argument("--save-normal-field", action="store_true")
+    p = sub.add_parser("visual-normals")
+    p.add_argument("mesh", type=Path)
+    p.add_argument("--field", type=Path, required=True)
+    p.add_argument("--field-from-mesh", type=Path, required=True, help="JSON 4x4 rigid transform")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--sigma", type=float, default=0.75)
     for name in ("audit-prepare", "audit-loop"):
         p = sub.add_parser(name)
         p.add_argument("case", type=Path)
@@ -230,11 +238,25 @@ def main():
         elif args.command == "refine-silhouettes":
             from lidar_video.silhouette_refinement import refine_case
 
-            result = refine_case(args.case, args.out, pitch=args.pitch_m)
+            result = refine_case(
+                args.case, args.out, pitch=args.pitch_m, save_normal_field=args.save_normal_field
+            )
         elif args.command == "complete-multiview":
             from lidar_video.multiview_completion import complete_case
 
-            result = complete_case(args.case, args.plan, args.out, pitch=args.pitch_m)
+            result = complete_case(
+                args.case, args.plan, args.out, pitch=args.pitch_m, save_normal_field=args.save_normal_field
+            )
+        elif args.command == "visual-normals":
+            from lidar_video.visual_normals import export_visual_normals
+
+            result = export_visual_normals(
+                args.mesh,
+                args.field,
+                json.loads(args.field_from_mesh.read_text()),
+                args.out,
+                sigma=args.sigma,
+            )
         elif args.command == "import-stray":
             from lidar_video.stray import import_stray
 
