@@ -24,6 +24,12 @@ def main():
     p.add_argument("--support-tolerance", type=float, default=0.0)
     p.add_argument("--simulate", action="store_true")
     p.add_argument("--frames", type=int, default=30)
+    p = sub.add_parser("trim-collision-padding")
+    p.add_argument("graph", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--objects", nargs="+", required=True)
+    p.add_argument("--max-depth", type=float, default=0.00075)
+    p.add_argument("--support-tolerance", type=float, default=0.0)
     p = sub.add_parser("reconstruction-freeze")
     p.add_argument("config", type=Path)
     p.add_argument("--out", type=Path, required=True)
@@ -178,6 +184,16 @@ def main():
                 support_tolerance=args.support_tolerance,
                 simulate=args.simulate,
                 frames=args.frames,
+            )
+        elif args.command == "trim-collision-padding":
+            from lidar_video.collision_padding import trim_collision_padding
+
+            result = trim_collision_padding(
+                args.graph,
+                args.out,
+                args.objects,
+                max_depth=args.max_depth,
+                support_tolerance=args.support_tolerance,
             )
         elif args.command in ("reconstruction-freeze", "reconstruction-run"):
             from lidar_video.reconstruction_run import freeze_reconstruction, run_reconstruction
