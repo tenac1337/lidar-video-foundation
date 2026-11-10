@@ -178,3 +178,96 @@ def test_invalid_explicit_support_penetration_rejected(tmp_path, penetration):
     graph["edges"][-1]["support_penetration_m"] = penetration
     with pytest.raises(ValueError):
         compile_scene_program(dict(nodes=[graph["nodes"][0], graph["nodes"][2]], edges=[graph["edges"][-1]]))
+
+
+def overhanging_scene(tmp_path):
+    path, graph = scene(tmp_path)
+    vertices = [[x, y, z] for z, width in [(-0.05, 0.03), (0.05, 0.15)]
+                for x in [-width, width] for y in [-width, width]]
+    trimesh.convex.convex_hull(vertices).export(path.parent / "assets/piece.obj")
+    graph["nodes"][2]["size_m"] = [0.3, 0.3, 0.1]
+    return path, graph
+
+
+def enable_support_band(graph, height=0.01):
+    graph["edges"][1].update(footprint_mode="support_band", support_band_height_m=height)
+
+
+def test_support_band_is_opt_in_and_includes_sloped_edge_intersections(tmp_path):
+    path, graph = overhanging_scene(tmp_path)
+    with pytest.raises(ValueError, match="occupies"):
+        prepare_asset_graph(graph, path.parent)
+    enable_support_band(graph)
+    original = copy.deepcopy(graph)
+    proxy, audit = prepare_asset_graph(graph, path.parent, jitter=0.1)
+    band = audit["semantic_edges"][1]
+    # 10% up a 0.1m frustum: .03 + .1 * (.15 - .03) = .042m.
+    assert np.allclose(band["footprint_local_xy_m"], [[-0.042] * 2, [0.042] * 2])
+    assert proxy["nodes"][1]["size_m"] == [0.3, 0.3, 0.1]
+    assert graph == original
+    path.write_text(json.dumps(graph))
+    result = run_asset_scene_program(path, tmp_path / "random", randomize=True, count=12, jitter=0.1)
+    samples = json.loads((tmp_path / "random/samples.json").read_text())["samples"]
+    for sample in samples:
+        item = sample["nodes"][2]
+        assert np.max(np.abs(item["position_m"][:2])) <= 0.058 + 1e-8
+        assert item["size_m"] == [0.3, 0.3, 0.1]
+        assert sample["edges"][1]["footprint_mode"] == "support_band"
+    assert result["attempts"] == [1] * 12
+    replay = run_asset_scene_program(path, tmp_path / "replay", count=1)
+    assert replay["replay_nodes_edges_exact"]
+    assert (tmp_path / "replay/assets/piece.obj").read_bytes() == (path.parent / "assets/piece.obj").read_bytes()
+
+
+def test_support_band_includes_collision_padding_and_asymmetric_offsets(tmp_path):
+    path, graph = overhanging_scene(tmp_path)
+    mesh = trimesh.creation.box(extents=[0.12, 0.04, 0.02])
+    mesh.apply_translation([0.04, 0, -0.04])
+    mesh.export(path.parent / "assets/collider.obj")
+    graph["nodes"][2]["collision_paths"].append("assets/collider.obj")
+    enable_support_band(graph)
+    proxy, audit = prepare_asset_graph(graph, path.parent, jitter=0.1)
+    assert np.allclose(audit["semantic_edges"][1]["footprint_local_xy_m"],
+                       [[-0.042, -0.042], [0.1, 0.042]])
+    assert np.allclose(np.array(proxy["nodes"][1]["placement_bounds_m"])[:, 0], [-0.058, 0])
+    graph["nodes"][2]["position_m"][0] = 0.001
+    with pytest.raises(ValueError, match="occupies"):
+        prepare_asset_graph(graph, path.parent)
+
+
+def test_support_band_never_shrinks_nonoverlap_or_board_support_envelopes(tmp_path):
+    path, graph = overhanging_scene(tmp_path)
+    enable_support_band(graph)
+    original = copy.deepcopy(graph)
+    graph["nodes"].append(dict(id="neighbor", kind="object", position_m=[0.12, 0, 0.05],
+                               size_m=[0.06, 0.06, 0.1]))
+    graph["edges"].append(dict(source="neighbor", target="board", relation="on"))
+    with pytest.raises(ValueError, match="overlap"):
+        prepare_asset_graph(graph, path.parent)
+    original["nodes"][0]["size_m"][:2] = [0.2, 0.2]
+    with pytest.raises(ValueError):
+        prepare_asset_graph(original, path.parent)
+
+
+@pytest.mark.parametrize("height", [None, True, 0, -0.01, float("nan"), float("inf"), 0.11, "0.01"])
+def test_support_band_rejects_invalid_height(tmp_path, height):
+    path, graph = overhanging_scene(tmp_path)
+    enable_support_band(graph, height)
+    with pytest.raises(ValueError, match="support_band_height_m"):
+        prepare_asset_graph(graph, path.parent)
+
+
+@pytest.mark.parametrize("mutation", ["unknown_mode", "implicit_mode", "wrong_edge", "no_mesh"])
+def test_support_band_rejects_ambiguous_contract(tmp_path, mutation):
+    path, graph = overhanging_scene(tmp_path)
+    enable_support_band(graph)
+    if mutation == "unknown_mode":
+        graph["edges"][1]["footprint_mode"] = "contact"
+    elif mutation == "implicit_mode":
+        del graph["edges"][1]["footprint_mode"]
+    elif mutation == "wrong_edge":
+        graph["edges"][-1]["footprint_mode"] = "support_band"
+    elif mutation == "no_mesh":
+        del graph["nodes"][2]["mesh_path"], graph["nodes"][2]["collision_paths"]
+    with pytest.raises(ValueError):
+        prepare_asset_graph(graph, path.parent)

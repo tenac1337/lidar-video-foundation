@@ -54,3 +54,18 @@ Collision decomposition can produce an envelope extending slightly below the rec
 All generated placements execute Scenic with one attempt and validate dimensions, asset bindings and compiled constraints. Native rollouts additionally check engine warnings, penetration and deterministic state replay. These are initial-placement and simulator consistency checks, not proof of real-world stability or preservation of relations throughout a dynamic rollout. Visual assets remain untextured if the input assets were untextured. Articulated arms, rotation sampling and nonlinear mesh contact constraints require further implementation.
 
 Native verification also reports `passive_motion`: each free object's final and maximum sampled translation/rotation relative to its initial pose, final linear/angular speeds, elapsed time and saved-frame count. Quaternion sign changes do not count as rotation. The asset-program verification retains this report for every simulated sample. These measurements have no automatic stability threshold: exact replay can reproduce a moving or falling object, and zero motion alone does not prove support contact. Peaks are over saved states, so motion between saved frames can be larger. Assess these measurements separately from engine/replay consistency and against the intended scene behavior.
+
+### Explicit support-band square placement
+
+By default, `occupies` still requires the full object envelope to fit inside its square. An upper overhang can instead be represented by explicitly choosing a geometric support-band footprint on that edge:
+
+```json
+{"source": "object", "target": "square", "relation": "occupies",
+ "footprint_mode": "support_band", "support_band_height_m": 0.01}
+```
+
+The asset adapter derives the local XY bounds of **all visual and collision triangles** below the visual mesh's lowest referenced vertex plus the specified band height. Triangle/plane intersections are included, as is collision padding below the visual base. Asymmetric local offsets are retained. The band height must be finite, positive, and no larger than the visual mesh's height; it is an explicit modeling choice, not a fitted or measured contact thickness. A larger band conservatively contains a smaller band's footprint. The audit records the derived footprint and band plane; user-supplied footprint bounds cannot replace the mesh calculation.
+
+Only square membership uses this footprint. The full `size_m` envelope remains unchanged for object separation, directional relations, whole-board `on` containment, and native export. The existing vertical support constraints and explicit overlap budget also remain unchanged. Consequently an overhang may extend beyond a square but not beyond its physical support or through another object's conservative envelope. Invalid reference layouts still fail without pose repair or rejection sampling.
+
+This option requires visual and collision OBJ assets. Missing/invalid band heights, unknown modes, and footprint options on other relation types fail explicitly. `footprint_mode: "envelope"` is equivalent to omitting the mode and rejects a band-height parameter. Source nodes, edges and assets are preserved in deterministic replay. The band is a geometric proxy, not proof of physical contact, center-of-mass support, stability, or accurate hidden geometry.

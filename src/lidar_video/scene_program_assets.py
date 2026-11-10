@@ -21,6 +21,41 @@ def _digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def _support_band_bounds(meshes, height):
+    """Bound all visual/collision triangles below a visual-base-relative plane.
+
+    Include edge/plane intersections: selecting only low vertices would miss
+    sloping triangles. This is a geometric band, not a measured contact patch.
+    The first mesh is the visual; collision padding below its base is included.
+    """
+    visual_z = meshes[0].triangles[:, :, 2]
+    if (
+        isinstance(height, bool)
+        or not isinstance(height, (int, float))
+        or not np.isfinite(height)
+        or not 0 < height <= np.ptp(visual_z)
+    ):
+        raise ValueError("support_band_height_m must be positive and no greater than visual height")
+    plane = float(visual_z.min() + height)
+    points = []
+    for mesh in meshes:
+        vertices = np.asarray(mesh.vertices)
+        used = vertices[np.unique(mesh.faces)]
+        points.append(used[used[:, 2] <= plane, :2])
+        left, right = vertices[mesh.edges_unique[:, 0]], vertices[mesh.edges_unique[:, 1]]
+        crossing = ((left[:, 2] < plane) & (right[:, 2] > plane)) | (
+            (right[:, 2] < plane) & (left[:, 2] > plane)
+        )
+        left, right = left[crossing], right[crossing]
+        fraction = (plane - left[:, 2]) / (right[:, 2] - left[:, 2])
+        points.append((left + fraction[:, None] * (right - left))[:, :2])
+    points = np.concatenate(points)
+    bounds = np.array([points.min(axis=0), points.max(axis=0)])
+    if not np.isfinite(bounds).all() or np.any(bounds[0] >= bounds[1]):
+        raise ValueError("Support band must have a finite nonzero XY footprint")
+    return bounds, plane
+
+
 def prepare_asset_graph(graph, asset_root, *, jitter=0.004, support_tolerance=0.0):
     """Validate assets and compile known semantic edges without dropping records."""
     if not np.isfinite(support_tolerance) or not 0 <= support_tolerance <= 0.005:
@@ -37,7 +72,7 @@ def prepare_asset_graph(graph, asset_root, *, jitter=0.004, support_tolerance=0.
         raise ValueError("Physical IDs must be safe asset filename components")
     if not physical or not any(n["kind"] == "support" for n in physical.values()):
         raise ValueError("Native asset export requires a physical support")
-    assets, contacts, semantic = {}, [], []
+    assets, contacts, semantic, meshes = {}, [], [], {}
     for name, node in physical.items():
         position, size = np.asarray(node["position_m"], float), np.asarray(node["size_m"], float)
         if (
@@ -48,6 +83,7 @@ def prepare_asset_graph(graph, asset_root, *, jitter=0.004, support_tolerance=0.
         ):
             raise ValueError("Physical nodes require finite XYZ centers and positive dimensions")
         if "mesh_path" in node:
+            meshes[name] = []
             if not isinstance(node.get("collision_paths"), list) or not node["collision_paths"]:
                 raise ValueError(f"Mesh node {name} requires collision assets")
             for relative in [node["mesh_path"], *node["collision_paths"]]:
@@ -64,6 +100,7 @@ def prepare_asset_graph(graph, asset_root, *, jitter=0.004, support_tolerance=0.
                 if np.any(mesh.bounds[0] < -size / 2 - TOL) or np.any(mesh.bounds[1] > size / 2 + TOL):
                     raise ValueError(f"Declared envelope does not contain asset for {name}: {relative}")
                 assets[relative] = _digest(path)
+                meshes[name].append(mesh)
         elif node.get("collision_paths"):
             raise ValueError("Collision assets without a visual mesh")
 
@@ -87,6 +124,10 @@ def prepare_asset_graph(graph, asset_root, *, jitter=0.004, support_tolerance=0.
     constraints, occupants = [], set()
     for index, edge in enumerate(graph["edges"]):
         a, b, relation = edge["source"], edge["target"], edge["relation"]
+        if relation != "occupies" and any(
+            key in edge for key in ("footprint_mode", "support_band_height_m")
+        ):
+            raise ValueError("Footprint options apply only to occupies edges")
         if relation == "part_of":
             semantic.append(dict(edge_index=index, handling="retained fixed region membership"))
         elif relation == "occupies":
@@ -116,23 +157,40 @@ def prepare_asset_graph(graph, asset_root, *, jitter=0.004, support_tolerance=0.
             ):
                 raise ValueError("Declared square bounds disagree with calibrated region")
             position, size = np.array(node["position_m"]), np.array(node["size_m"])
+            mode = edge.get("footprint_mode", "envelope")
+            if mode == "envelope":
+                if "support_band_height_m" in edge:
+                    raise ValueError("support_band_height_m requires footprint_mode support_band")
+                footprint = np.array([-size[:2] / 2, size[:2] / 2])
+                record = dict(edge_index=index, handling="full envelope footprint inside calibrated square")
+            elif mode == "support_band":
+                if a not in meshes:
+                    raise ValueError("Support-band placement requires visual and collision mesh assets")
+                footprint, plane = _support_band_bounds(meshes[a], edge.get("support_band_height_m"))
+                record = dict(
+                    edge_index=index,
+                    handling="visual and collision support-band footprint inside calibrated square",
+                    footprint_local_xy_m=footprint.tolist(),
+                    band_top_local_z_m=plane,
+                    support_band_height_m=edge["support_band_height_m"],
+                )
+            else:
+                raise ValueError("Unknown occupies footprint_mode")
             bounds = np.array(node.get("placement_bounds_m", [position - jitter, position + jitter]), float)
             if bounds.shape != (2, 3) or not np.isfinite(bounds).all() or np.any(bounds[0] > bounds[1]):
                 raise ValueError("Invalid placement bounds")
-            bounds[0, :2] = np.maximum(bounds[0, :2], region[0] + size[:2] / 2)
-            bounds[1, :2] = np.minimum(bounds[1, :2], region[1] - size[:2] / 2)
+            bounds[0, :2] = np.maximum(bounds[0, :2], region[0] - footprint[0])
+            bounds[1, :2] = np.minimum(bounds[1, :2], region[1] - footprint[1])
             # Even fixed nodes must satisfy the semantic region constraint.
             if np.any(position[:2] < bounds[0, :2] - TOL) or np.any(position[:2] > bounds[1, :2] + TOL):
-                raise ValueError("Reference envelope violates occupies or its placement bounds")
+                raise ValueError("Reference footprint violates occupies or its placement bounds")
             node["placement_bounds_m"] = bounds.tolist()
             if not any(
                 e["source"] == a and e["target"] == region_parents[b] and e["relation"] == "on"
                 for e in graph["edges"]
             ):
                 raise ValueError("Occupant must be on its square's support")
-            semantic.append(
-                dict(edge_index=index, handling="full envelope footprint inside calibrated square")
-            )
+            semantic.append(record)
         elif relation in RELATIONS:
             if a not in physical or b not in physical:
                 raise ValueError("Physical relation references a semantic-only region")
