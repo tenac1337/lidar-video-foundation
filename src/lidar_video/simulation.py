@@ -10,6 +10,7 @@ import numpy as np
 from roboskills.tools.mujoco import engine
 
 from lidar_video.capture import write_json
+from lidar_video.passive_motion import measure_passive_motion
 from lidar_video.synthetic import add_lighting, camera_axes
 
 
@@ -150,6 +151,10 @@ def simulate(graph, out, frames=60, fps=30, asset_root=None):
         preview=4,
     )
     replay = replay_check(out / "rollout")
+    with np.load(out / "rollout/trajectory.npz") as saved:
+        report["passive_motion"] = measure_passive_motion(
+            model, saved, [n["id"] for n in physical if n["kind"] == "object"]
+        )
     if (
         report["warnings"]
         or report["max_penetration_m"] > 0.005
@@ -195,7 +200,8 @@ def simulate(graph, out, frames=60, fps=30, asset_root=None):
             replay,
             warnings=report["warnings"],
             max_penetration_m=report["max_penetration_m"],
-            scope="passive reconstructed object/support stability; no hand or robot manipulation",
+            scope="native engine/replay consistency; passive motion reported separately, not certified stable",
+            passive_motion=report["passive_motion"],
             physical_priors=dict(object_mass_kg=0.08, friction=[0.8, 0.005, 0.0001]),
             physics_backend="unmodified roboskills.tools.mujoco.engine",
         ),

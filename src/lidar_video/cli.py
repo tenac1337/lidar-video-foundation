@@ -7,6 +7,35 @@ def main():
     parser = argparse.ArgumentParser(description="RGB-D to RoboSkills simulation, scene graph, and Scenic")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
+    p = sub.add_parser("scene-program")
+    p.add_argument("graph", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--randomize", action="store_true")
+    p.add_argument("--jitter", type=float, default=0.004)
+    p.add_argument("--samples", type=int, default=20)
+    p.add_argument("--seed", type=int, default=7)
+    p = sub.add_parser("scene-program-assets")
+    p.add_argument("graph", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--randomize", action="store_true")
+    p.add_argument("--jitter", type=float, default=0.004)
+    p.add_argument("--samples", type=int, default=20)
+    p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--support-tolerance", type=float, default=0.0)
+    p.add_argument("--simulate", action="store_true")
+    p.add_argument("--frames", type=int, default=30)
+    p = sub.add_parser("trim-collision-padding")
+    p.add_argument("graph", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--objects", nargs="+", required=True)
+    p.add_argument("--max-depth", type=float, default=0.00075)
+    p.add_argument("--support-tolerance", type=float, default=0.0)
+    p = sub.add_parser("reconstruction-freeze")
+    p.add_argument("config", type=Path)
+    p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("reconstruction-run")
+    p.add_argument("run", type=Path)
+    p.add_argument("--lock-sha256", required=True)
     p = sub.add_parser("inspect-stray")
     p.add_argument("capture", type=Path)
     p.add_argument("--out", type=Path, required=True)
@@ -37,11 +66,19 @@ def main():
     p.add_argument("case", type=Path)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--pitch-m", type=float, default=0.001)
+    p.add_argument("--save-normal-field", action="store_true")
     p = sub.add_parser("complete-multiview")
     p.add_argument("case", type=Path)
     p.add_argument("--plan", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--pitch-m", type=float, default=0.001)
+    p.add_argument("--save-normal-field", action="store_true")
+    p = sub.add_parser("visual-normals")
+    p.add_argument("mesh", type=Path)
+    p.add_argument("--field", type=Path, required=True)
+    p.add_argument("--field-from-mesh", type=Path, required=True, help="JSON 4x4 rigid transform")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--sigma", type=float, default=0.75)
     for name in ("audit-prepare", "audit-loop"):
         p = sub.add_parser(name)
         p.add_argument("case", type=Path)
@@ -123,7 +160,52 @@ def main():
             p.add_argument("--no-simulation", action="store_true")
     args = parser.parse_args()
     try:
-        if args.command == "inspect-stray":
+        if args.command == "scene-program":
+            from lidar_video.scene_program import run_scene_program
+
+            result = run_scene_program(
+                json.loads(args.graph.read_text()),
+                args.out,
+                randomize=args.randomize,
+                jitter=args.jitter,
+                count=args.samples,
+                seed=args.seed,
+            )
+        elif args.command == "scene-program-assets":
+            from lidar_video.scene_program_assets import run_asset_scene_program
+
+            result = run_asset_scene_program(
+                args.graph,
+                args.out,
+                randomize=args.randomize,
+                jitter=args.jitter,
+                count=args.samples,
+                seed=args.seed,
+                support_tolerance=args.support_tolerance,
+                simulate=args.simulate,
+                frames=args.frames,
+            )
+        elif args.command == "trim-collision-padding":
+            from lidar_video.collision_padding import trim_collision_padding
+
+            result = trim_collision_padding(
+                args.graph,
+                args.out,
+                args.objects,
+                max_depth=args.max_depth,
+                support_tolerance=args.support_tolerance,
+            )
+        elif args.command in ("reconstruction-freeze", "reconstruction-run"):
+            from lidar_video.reconstruction_run import freeze_reconstruction, run_reconstruction
+
+            try:
+                if args.command == "reconstruction-freeze":
+                    result = freeze_reconstruction(args.config, args.out)
+                else:
+                    result = run_reconstruction(args.run, expected_lock_sha256=args.lock_sha256)
+            except (OSError, KeyError, TypeError, AttributeError) as error:
+                raise ValueError(f"Invalid or unavailable reconstruction input: {error}") from error
+        elif args.command == "inspect-stray":
             from lidar_video.intake import inspect_stray
 
             result = inspect_stray(args.capture, args.out, fps=args.fps, plan=args.plan)
@@ -172,11 +254,25 @@ def main():
         elif args.command == "refine-silhouettes":
             from lidar_video.silhouette_refinement import refine_case
 
-            result = refine_case(args.case, args.out, pitch=args.pitch_m)
+            result = refine_case(
+                args.case, args.out, pitch=args.pitch_m, save_normal_field=args.save_normal_field
+            )
         elif args.command == "complete-multiview":
             from lidar_video.multiview_completion import complete_case
 
-            result = complete_case(args.case, args.plan, args.out, pitch=args.pitch_m)
+            result = complete_case(
+                args.case, args.plan, args.out, pitch=args.pitch_m, save_normal_field=args.save_normal_field
+            )
+        elif args.command == "visual-normals":
+            from lidar_video.visual_normals import export_visual_normals
+
+            result = export_visual_normals(
+                args.mesh,
+                args.field,
+                json.loads(args.field_from_mesh.read_text()),
+                args.out,
+                sigma=args.sigma,
+            )
         elif args.command == "import-stray":
             from lidar_video.stray import import_stray
 
@@ -293,6 +389,8 @@ def main():
                 args.capture, args.out, samples=args.samples, simulate_output=not args.no_simulation
             )
         print(json.dumps(result, indent=2))
+        if args.command == "reconstruction-run" and result["status"] != "completed":
+            parser.exit(3, "Reconstruction checks did not complete; inspect result.json.\n")
         if args.command == "inspect-stray" and result["status"] != "ready":
             parser.exit(3, "Capture intake is not ready; inspect the saved report.\n")
         if args.command.startswith("audit-") and result["status"] != "accepted":

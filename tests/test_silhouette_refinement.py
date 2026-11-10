@@ -76,3 +76,17 @@ def test_nonwatertight_prior_and_missing_instance_rejected(carve_input):
     mesh.update_faces(np.arange(len(mesh.faces) - 1))
     with pytest.raises(ValueError, match="watertight"):
         carve_reference(mesh, labels, 1, k, pose)
+
+
+def test_saving_normal_field_never_changes_candidate(carve_input, tmp_path):
+    mesh, labels, k, pose = carve_input
+    expected, _ = carve_reference(mesh, labels, 1, k, pose)
+    path = tmp_path / "field.npz"
+    actual, evidence = carve_reference(mesh, labels, 1, k, pose, normal_field_path=path)
+    np.testing.assert_array_equal(actual.vertices, expected.vertices)
+    np.testing.assert_array_equal(actual.faces, expected.faces)
+    with np.load(path) as field:
+        assert field["matrix"].dtype == np.bool_
+        assert field["matrix"].sum() == evidence["occupied_voxels_after"]
+        assert field["pitch_m"] == 0.001
+    assert evidence["normal_field"]["sha256"]

@@ -21,7 +21,9 @@ from lidar_video.object_evidence import assess_depth
 from lidar_video.reconstruction import rigid
 
 
-def carve_reference(mesh, labels, label, k, board_from_camera, *, pitch=0.001, max_cells=4_000_000):
+def carve_reference(
+    mesh, labels, label, k, board_from_camera, *, pitch=0.001, max_cells=4_000_000, normal_field_path=None
+):
     """Pure candidate construction: this API receives no other-view observations."""
     labels, k = np.asarray(labels), np.asarray(k, dtype=float)
     if labels.ndim != 2 or labels.dtype.kind not in "ui" or np.any(labels < 0):
@@ -76,19 +78,24 @@ def carve_reference(mesh, labels, label, k, board_from_camera, *, pitch=0.001, m
         accepted=False,
         limitations="learned completion plus voxel discretization; requires unchanged multiview validation",
     )
-    if removed == 0:
-        return mesh.copy(), evidence
     matrix = np.zeros(voxel.shape, dtype=bool)
     indices = voxel.sparse_indices[keep]
     matrix[tuple(indices.T)] = True
-    result = trimesh.voxel.ops.matrix_to_marching_cubes(matrix, pitch=pitch)
-    result.apply_translation(voxel.transform[:3, 3])
+    if removed == 0:
+        result = mesh.copy()
+    else:
+        result = trimesh.voxel.ops.matrix_to_marching_cubes(matrix, pitch=pitch)
+        result.apply_translation(voxel.transform[:3, 3])
     if not len(result.faces) or not result.is_watertight or not np.isfinite(result.vertices).all():
         raise ValueError("Carving did not produce a finite watertight candidate")
+    if normal_field_path is not None:
+        from lidar_video.visual_normals import save_normal_field
+
+        evidence["normal_field"] = save_normal_field(normal_field_path, matrix, voxel.transform[:3, 3], pitch)
     return result, evidence
 
 
-def refine_case(case_file, out, *, pitch=0.001):
+def refine_case(case_file, out, *, pitch=0.001, save_normal_field=False):
     """Write a new complete candidate manifest, preserving the measured inputs.
 
     Only each object's declared reference mask constructs its candidate. The
@@ -142,11 +149,17 @@ def refine_case(case_file, out, *, pitch=0.001):
         mesh = trimesh.load(mesh_path, force="mesh", process=True)
         mesh.apply_transform(board_from_object)
         k = data["K"] if data["K"].ndim == 2 else data["K"][frame]
-        candidate, evidence = carve_reference(
-            mesh, labels, observation["label"], k, board_from_camera, pitch=pitch
-        )
         folder = out / "objects" / name
         folder.mkdir(parents=True)
+        candidate, evidence = carve_reference(
+            mesh,
+            labels,
+            observation["label"],
+            k,
+            board_from_camera,
+            pitch=pitch,
+            normal_field_path=folder / "normal_field.npz" if save_normal_field else None,
+        )
         candidate.apply_transform(np.linalg.inv(board_from_object))
         candidate.export(folder / "mesh.ply")
         shutil.copyfile(pose_path, folder / "pose.json")
