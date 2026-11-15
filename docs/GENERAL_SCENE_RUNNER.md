@@ -82,8 +82,14 @@ python -m lidar_video.general_perception development-capture.npz \
   --frames 0 1 2 --prompt 'tabletop object' --samples 100
 ```
 
-SAM3 proposes generic instances. The same association checks choose reference
-views. SAM3D receives measured scene context with only unreliable target depth
+SAM3 proposes generic instances. Raw masks and detector metadata are preserved.
+A confidence-ordered mask-IoU threshold of 0.8 suppresses near duplicates. Pixels
+claimed by multiple remaining masks are left unassigned to every instance; a
+mask retaining less than 80% of its area is rejected. The per-frame audit retains
+raw detection indices, exclusions and removed-pixel counts. This is conservative
+abstention, not proof of correct instance boundaries or a complete inventory.
+The same association checks choose reference views; pairwise evidence and
+observation-to-source mappings are retained for diagnosis. SAM3D receives measured scene context with only unreliable target depth
 removed. Its metric mesh is transformed by `world_from_camera @ camera_from_object`
 once; the reported scale is not applied again. CoACD supplies collision parts.
 The adapter then freezes and executes the mesh stage. Any failure is retained;

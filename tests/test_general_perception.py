@@ -52,3 +52,47 @@ def test_nonrigid_model_pose_rejected(tmp_path):
     write_json(tmp_path / "pose.json", dict(camera_from_object=pose.tolist()))
     with pytest.raises(ValueError, match="rigid"):
         world_prior(tmp_path, data, 0, None)
+
+
+def test_mask_duplicates_suppressed_and_unrelated_instance_survives():
+    from lidar_video.general_perception import disambiguate_masks
+
+    a = np.zeros((20, 20), bool)
+    a[1:8, 1:8] = True
+    b = np.zeros_like(a)
+    b[10:18, 10:18] = True
+    items = [dict(mask=a, score=0.8), dict(mask=a.copy(), score=0.9), dict(mask=b, score=0.7)]
+    result, audit = disambiguate_masks(items)
+    assert [r["raw_detection"] for r in result] == [1, 2]
+    assert audit["events"][0]["raw_detection"] == 0
+    np.testing.assert_array_equal(items[0]["mask"], a)
+    np.testing.assert_array_equal(result[1]["mask"], b)
+
+
+def test_disputed_pixels_unassigned_even_when_nested_detection_rejected():
+    from lidar_video.general_perception import disambiguate_masks
+
+    outer = np.zeros((20, 20), bool)
+    outer[2:18, 2:18] = True
+    inner = np.zeros_like(outer)
+    inner[6:9, 6:9] = True
+    result, audit = disambiguate_masks([dict(mask=outer, score=0.9), dict(mask=inner, score=0.8)])
+    assert len(result) == 1
+    assert not (result[0]["mask"] & inner).any()
+    assert audit["disputed_pixels"] == 9
+    assert any(e["action"] == "rejected ambiguous mask" for e in audit["events"])
+
+
+def test_mask_overlap_abstention_and_invalid_inputs():
+    from lidar_video.general_perception import disambiguate_masks
+
+    a = np.zeros((20, 20), bool)
+    b = a.copy()
+    a[2:12, 2:12] = True
+    b[3:13, 3:13] = True
+    result, audit = disambiguate_masks([dict(mask=a, score=0.9), dict(mask=b, score=0.8)])
+    assert result == []  # Neither retains 80%; no arbitrary winner.
+    assert len(audit["events"]) == 2
+    assert disambiguate_masks([])[0] == []
+    with pytest.raises(ValueError, match="confidence"):
+        disambiguate_masks([dict(mask=a, score=float("nan"))])

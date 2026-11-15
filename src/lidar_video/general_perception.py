@@ -111,6 +111,59 @@ def world_prior(shape, data, frame, decompose):
     )
 
 
+def disambiguate_masks(items, *, duplicate_iou=0.8, min_retained=0.8):
+    """Suppress near duplicates, abstain on disputed pixels; retain a raw-index audit."""
+    if not 0 < duplicate_iou <= 1 or not 0 < min_retained <= 1:
+        raise ValueError("Mask thresholds must lie in (0, 1]")
+    masks = [np.asarray(item["mask"]) for item in items]
+    if any(m.dtype != bool or m.ndim != 2 or not m.any() for m in masks):
+        raise ValueError("Expected nonempty boolean masks")
+    if masks and any(m.shape != masks[0].shape for m in masks):
+        raise ValueError("Masks must share an image shape")
+    scores = [float(item["score"]) for item in items]
+    if any(not np.isfinite(s) or not 0 <= s <= 1 for s in scores):
+        raise ValueError("Expected finite confidence scores in [0, 1]")
+    kept, events = [], []
+    for i in sorted(range(len(items)), key=lambda i: (-scores[i], i)):
+        duplicate = next(
+            (
+                j
+                for j in kept
+                if np.count_nonzero(masks[i] & masks[j]) / np.count_nonzero(masks[i] | masks[j])
+                >= duplicate_iou
+            ),
+            None,
+        )
+        if duplicate is not None:
+            events.append(
+                dict(raw_detection=i, action="suppressed near duplicate", kept_raw_detection=duplicate)
+            )
+        else:
+            kept.append(i)
+    kept.sort()
+    contested = np.zeros(masks[0].shape, bool) if masks else np.zeros((0, 0), bool)
+    if kept:
+        contested = np.sum([masks[i] for i in kept], axis=0) > 1
+    result = []
+    for i in kept:
+        mask = masks[i] & ~contested
+        fraction = float(mask.sum() / masks[i].sum())
+        if fraction < min_retained or not mask.any():
+            events.append(dict(raw_detection=i, action="rejected ambiguous mask", retained_fraction=fraction))
+            continue
+        if fraction < 1:
+            events.append(dict(raw_detection=i, action="removed disputed pixels", retained_fraction=fraction))
+        result.append(dict(items[i], mask=mask.copy(), raw_detection=i))
+    return result, dict(
+        duplicate_iou=duplicate_iou,
+        min_retained=min_retained,
+        input_count=len(items),
+        output_count=len(result),
+        disputed_pixels=int(contested.sum()),
+        events=events,
+    )
+
+
 def run_development(
     capture,
     out,
@@ -182,6 +235,11 @@ def run_development(
                 )
         finally:
             sam.close()
+        cleanup = {}
+        for frame in frames:
+            raw[frame], cleanup[str(frame)] = disambiguate_masks(raw[frame])
+        write_json(out / "mask-disambiguation.json", cleanup)
+        status["mask_disambiguation"] = cleanup
         selected, audit = associate_instances(data, raw, static_scene=True, policy=InstancePolicy(seed=seed))
         write_json(out / "association.json", audit)
         if not selected:
@@ -266,7 +324,12 @@ def run_development(
         receipt = freeze(out / "recipe.json", out / "mesh-run")
         write_json(out / "mesh-run-receipt.json", receipt)
         result = execute(out / "mesh-run", receipt["lock_sha256"])
-        status.update(status="completed", mesh_stage=result)
+        status.update(
+            status="completed_with_exclusions"
+            if any(v["events"] for v in cleanup.values()) or audit["rejected"]
+            else "completed",
+            mesh_stage=result,
+        )
     except Exception as error:
         status.update(status="failed", error=str(error), elapsed_s=time.monotonic() - started)
         write_json(out / "status.json", status)

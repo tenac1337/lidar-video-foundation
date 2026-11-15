@@ -141,6 +141,9 @@ def associate_instances(data, detections, *, static_scene, policy=None):
                 for a, b in [(left["cloud"], right["cloud"]), (right["cloud"], left["cloud"])]
             ]
             if min(fractions) < policy.association_fraction:
+                pair_checks[(i, j)] = dict(
+                    spatial_fractions=fractions, passed=False, reason="insufficient mutual surface proximity"
+                )
                 continue
             a = reprojection_agreement(
                 left["cloud"], right["mask"], data, {"board_from_world": np.eye(4)}, right["frame"]
@@ -148,7 +151,9 @@ def associate_instances(data, detections, *, static_scene, policy=None):
             b = reprojection_agreement(
                 right["cloud"], left["mask"], data, {"board_from_world": np.eye(4)}, left["frame"]
             )
-            pair_checks[(i, j)] = dict(forward=a, backward=b, spatial_fractions=fractions)
+            pair_checks[(i, j)] = dict(
+                forward=a, backward=b, spatial_fractions=fractions, passed=a["passed"] and b["passed"]
+            )
             if a["passed"] and b["passed"]:
                 network.add_edge(i, j)
     groups = []
@@ -182,6 +187,16 @@ def associate_instances(data, detections, *, static_scene, policy=None):
     return selected, dict(
         policy=asdict(policy),
         accepted_instances=len(selected),
+        observations=[
+            dict(
+                frame=o["frame"],
+                source_frame=o["source_frame"],
+                detection=o["detection"],
+                quality=o["quality"],
+            )
+            for o in observations
+        ],
+        pair_checks=[dict(left=i, right=j, **check) for (i, j), check in pair_checks.items()],
         rejected=rejected,
         scope="Static-instance correspondence hypotheses, not complete object detection.",
     )
