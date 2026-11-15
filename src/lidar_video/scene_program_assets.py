@@ -246,6 +246,7 @@ def run_asset_scene_program(
     support_tolerance=0.0,
     simulate=False,
     frames=30,
+    fps=30,
 ):
     """Emit Scenic, complete sampled graphs, copied assets and optional native rollouts."""
     path, out = Path(graph_file).resolve(), Path(out).resolve()
@@ -254,8 +255,11 @@ def run_asset_scene_program(
     graph = json.loads(path.read_text())
     graph_hash = _digest(path)
     proxy, audit = prepare_asset_graph(graph, path.parent, jitter=jitter, support_tolerance=support_tolerance)
-    if simulate and (not isinstance(frames, int) or isinstance(frames, bool) or frames < 2):
-        raise ValueError("Simulation requires at least two frames")
+    if simulate and (
+        not isinstance(frames, int) or isinstance(frames, bool) or frames < 2
+        or isinstance(fps, bool) or not isinstance(fps, (int, float)) or not np.isfinite(fps) or fps <= 0
+    ):
+        raise ValueError("Simulation requires at least two frames and positive finite fps")
     if out.exists():
         raise FileExistsError(out)
     # run_scene_program validates counts and constraints before creating output.
@@ -302,7 +306,9 @@ def run_asset_scene_program(
         if simulate:
             from lidar_video.simulation import simulate as simulate_native
 
-            report, replay = simulate_native(sample, folder / "simulation", frames=frames, asset_root=out)
+            report, replay = simulate_native(
+                sample, folder / "simulation", frames=frames, fps=fps, asset_root=out
+            )
             physics.append(
                 dict(
                     sample_index=i,
