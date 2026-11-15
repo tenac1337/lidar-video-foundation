@@ -1,0 +1,14 @@
+# Geometry/runtime versions exercised by the generic development integration tests.
+# Model workers use their separate environments; this is not a complete lockfile.
+numpy==2.5.4
+scipy==1.18.1
+trimesh==4.12.2
+pillow==13.0.0
+opencv-python==4.14.0.94
+networkx==3.7
+scenic==3.1.1
+mujoco==3.17.0
+rtree==1.4.1
+shapely==2.2.0
+coacd==1.0.14
+fast-simplification==0.2.0
