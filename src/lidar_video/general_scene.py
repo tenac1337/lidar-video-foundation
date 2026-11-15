@@ -248,6 +248,19 @@ def rectangular_top(meshes, bounds):
     return bool(unary_union(surfaces).buffer(1e-7).covers(target))
 
 
+def first_hit_ranges(mesh, camera, rays, batch_size=32):
+    """Bound ray/triangle candidate memory while retaining every first intersection."""
+    first = np.full(len(rays), np.inf)
+    for start in range(0, len(rays), batch_size):
+        batch = rays[start : start + batch_size]
+        hit, ray_id, _ = mesh.ray.intersects_location(
+            np.tile(camera, (len(batch), 1)), batch, multiple_hits=True
+        )
+        if len(hit):
+            np.minimum.at(first, ray_id + start, np.linalg.norm(hit - camera, axis=1))
+    return first
+
+
 def build_mesh_scene(data, selected, priors, support, out, *, policy=None, jitter=0.03):
     """Validate external mesh priors and generate an asset-bearing generic graph.
 
@@ -310,11 +323,7 @@ def build_mesh_scene(data, selected, priors, support, out, *, policy=None, jitte
             rays = checked - camera
             observed_range = np.linalg.norm(rays, axis=1)
             rays /= observed_range[:, None]
-            hit, ray_id, _ = mesh.ray.intersects_location(
-                np.tile(camera, (len(rays), 1)), rays, multiple_hits=True
-            )
-            first = np.full(len(rays), np.inf)
-            np.minimum.at(first, ray_id, np.linalg.norm(hit - camera, axis=1))
+            first = first_hit_ranges(mesh, camera, rays)
             hit_fraction = float(np.isfinite(first).mean())
             ray_error = abs(first[np.isfinite(first)] - observed_range[np.isfinite(first)])
             ray_median = float(np.median(ray_error)) if len(ray_error) else None

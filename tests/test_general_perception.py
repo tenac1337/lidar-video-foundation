@@ -96,3 +96,58 @@ def test_mask_overlap_abstention_and_invalid_inputs():
     assert disambiguate_masks([])[0] == []
     with pytest.raises(ValueError, match="confidence"):
         disambiguate_masks([dict(mask=a, score=float("nan"))])
+
+
+def test_interrupted_model_attempt_preserves_terminal_status(tmp_path, monkeypatch):
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from lidar_video.general_perception import run_development
+
+    def interrupt():
+        raise KeyboardInterrupt()
+
+    monkeypatch.setitem(sys.modules, "roboskills.tools.sam3.sam3", SimpleNamespace(Sam=interrupt))
+    monkeypatch.setitem(sys.modules, "roboskills.tools.coacd.coacd", SimpleNamespace(decompose=None))
+    original_is_file = Path.is_file
+    monkeypatch.setattr(Path, "is_file", lambda p: str(p) == "/opt/venv/bin/python" or original_is_file(p))
+    native = tmp_path / "colab_sam3d.py"
+    native.write_text("# stub; never executed")
+    native.with_name("sam3d_native_rays.py").write_text("# stub; never executed")
+    data, _, _ = fixture()
+    capture = tmp_path / "capture.npz"
+    np.savez_compressed(capture, **data)
+    out = tmp_path / "attempt"
+    with pytest.raises(KeyboardInterrupt):
+        run_development(capture, out, native, frames=[0, 1])
+    status = json.loads((out / "status.json").read_text())
+    assert status["status"] == "interrupted"
+    assert status["error_type"] == "KeyboardInterrupt"
+    assert status["elapsed_s"] >= 0
+    with pytest.raises(FileExistsError):
+        run_development(capture, out, native, frames=[0, 1])
+
+
+def test_batched_first_hits_preserve_front_surface_and_misses():
+    from lidar_video.general_scene import first_hit_ranges
+
+    mesh = trimesh.creation.box(extents=[2, 2, 2])
+    mesh.apply_translation([0, 0, 3])
+    camera = np.zeros(3)
+    rays = np.tile([0.0, 0.0, 1.0], (65, 1))
+    rays[-1] = [1.0, 0.0, 0.0]
+    actual = mesh.ray.intersects_location
+    sizes = []
+
+    def bounded(origins, directions, **kwargs):
+        sizes.append(len(directions))
+        return actual(origins, directions, **kwargs)
+
+    from unittest.mock import patch
+
+    with patch.object(mesh.ray, "intersects_location", side_effect=bounded):
+        ranges = first_hit_ranges(mesh, camera, rays)
+    assert sizes == [32, 32, 1]
+    np.testing.assert_allclose(ranges[:-1], 2.0)
+    assert np.isinf(ranges[-1])

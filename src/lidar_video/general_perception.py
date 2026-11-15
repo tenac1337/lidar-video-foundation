@@ -330,8 +330,13 @@ def run_development(
             else "completed",
             mesh_stage=result,
         )
-    except Exception as error:
-        status.update(status="failed", error=str(error), elapsed_s=time.monotonic() - started)
+    except BaseException as error:
+        status.update(
+            status="interrupted" if isinstance(error, (KeyboardInterrupt, SystemExit)) else "failed",
+            error_type=type(error).__name__,
+            error=str(error),
+            elapsed_s=time.monotonic() - started,
+        )
         write_json(out / "status.json", status)
         raise
     status["elapsed_s"] = time.monotonic() - started
