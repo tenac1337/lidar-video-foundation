@@ -111,3 +111,30 @@ frozen model weights and runtime, complete baseline adapters with comparable
 input/budget contracts, and an executable successor evaluation lock. Appearance
 currently uses median observed color; texture transfer and complete inventory
 recovery remain unvalidated. Do not use reserved evaluation data for development.
+
+## Discovery before reconstruction
+
+`python -m lidar_video.general_discovery CAPTURE --out RUN --frames 0 1 2`
+performs a development-only discovery diagnostic without generating meshes. It
+uses the generic prompts `object` and `small object`, and retains both duplicate
+IoU conditions (0.8 and 0.5). Neither condition is declared a winner by its count.
+All raw masks, scores, cleaned label maps, raw-to-clean index mappings, pairwise
+association evidence, source IDs and excluded observations are retained. Each
+condition reports `inventory_complete: false`; corroborated tracks do not prove
+that every object was found. The input must be development data, not a reserved
+evaluation capture. This diagnostic does not replace a frozen evaluation recipe.
+
+`run_checkpoint.pack` packages an explicit list of small artifact files into a
+bounded, checksummed JSON envelope. A notebook can display this envelope as
+`application/json`. A local caller retrieves the saved notebook, extracts the
+envelope, and calls `run_checkpoint.restore` with its recorded SHA-256. Only then
+is persistence verified. The transport rejects path escapes, member tampering,
+oversized archives and overwriting an existing destination. Credentials and model
+weights must not be included in the explicit artifact list.
+
+The discovery API accepts a `checkpoint(output_directory, stage)` callback after
+each completed view and after association. A runtime orchestrator can pause in
+that callback until the local copy is verified. Saving a ZIP in `/content`,
+displaying a download link, or reporting that a callback ran is insufficient proof
+of durable storage. Preserve failed attempts and their raw proposals before any
+new development condition; never silently rerun into the same output directory.
