@@ -25,6 +25,7 @@ from lidar_video.general_scene import InstancePolicy, associate_instances
 from lidar_video.model_depth import object_conditioning_depth
 from lidar_video.native_depth import native_intrinsics, native_shape, sample_ids
 from lidar_video.reconstruction import rigid
+from lidar_video.surface_conditioning import choose_conditioning_reference
 from lidar_video.synthetic import encode_video
 
 
@@ -244,6 +245,14 @@ def run_development(
         write_json(out / "association.json", audit)
         if not selected:
             raise ValueError("No corroborated object detections")
+        references, conditioning_audit = {}, {}
+        for name, item in selected.items():
+            references[name], conditioning_audit[name] = choose_conditioning_reference(data, item)
+        write_json(out / "conditioning-evidence.json", conditioning_audit)
+        if any(reference is None for reference in references.values()):
+            raise ValueError(
+                "Insufficient cross-view measured conditioning depth; inspect conditioning-evidence.json"
+            )
         masks = out / "masks"
         masks.mkdir()
         detection_frames = {}
@@ -258,7 +267,7 @@ def run_development(
         write_json(out / "detections.json", dict(schema="generic-instance-masks-v1", frames=detection_frames))
         entries = {}
         for name, item in selected.items():
-            obs = item["reference"]
+            obs = references[name]
             with np.load(transport / "depth.npz", allow_pickle=False) as archive:
                 conditioned = object_conditioning_depth(archive, obs["frame"], obs["mask"], obs["trusted"])
             depth_path = out / f"depth-{name}.npz"

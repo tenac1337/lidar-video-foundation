@@ -129,6 +129,47 @@ def test_interrupted_model_attempt_preserves_terminal_status(tmp_path, monkeypat
         run_development(capture, out, native, frames=[0, 1])
 
 
+def test_uncorroborated_conditioning_stops_before_mesh_inference(tmp_path, monkeypatch):
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from lidar_video import general_perception
+
+    data, detections, _ = fixture()
+
+    class Detector:
+        frame = 0
+
+        def detect(self, rgb, prompts, threshold):
+            result = {prompts[0]: [dict(item, score=0.99) for item in detections[self.frame]]}
+            self.frame += 1
+            return result
+
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "roboskills.tools.sam3.sam3", SimpleNamespace(Sam=Detector))
+    monkeypatch.setitem(sys.modules, "roboskills.tools.coacd.coacd", SimpleNamespace(decompose=None))
+    original_is_file = Path.is_file
+    monkeypatch.setattr(Path, "is_file", lambda p: str(p) == "/opt/venv/bin/python" or original_is_file(p))
+    monkeypatch.setattr(
+        general_perception, "choose_conditioning_reference", lambda *args: (None, dict(passed=False))
+    )
+    native = tmp_path / "colab_sam3d.py"
+    native.write_text("raise AssertionError('Must not invoke mesh inference')")
+    native.with_name("sam3d_native_rays.py").write_text("# unused")
+    capture = tmp_path / "capture.npz"
+    np.savez_compressed(capture, **data)
+    out = tmp_path / "attempt"
+    with pytest.raises(ValueError, match="Insufficient cross-view"):
+        general_perception.run_development(capture, out, native, frames=[0, 1])
+    audit = json.loads((out / "conditioning-evidence.json").read_text())
+    assert len(audit) == 2 and not any(row["passed"] for row in audit.values())
+    assert not (out / "shapes").exists()
+    assert json.loads((out / "status.json").read_text())["status"] == "failed"
+
+
 def test_batched_first_hits_preserve_front_surface_and_misses():
     from lidar_video.general_scene import first_hit_ranges
 

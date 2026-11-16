@@ -99,6 +99,30 @@ For irregular sensor recordings, the model's video is explicitly an **index-only
 image container**. Original timestamps and source IDs remain in metadata. Its
 1 FPS playback timing must never be used for temporal inference.
 
+Before mesh inference, `surface_conditioning` tests each native sample against
+the associated instance's other distinct views. A sample must agree with another
+visible measurement within 15 mm and the target silhouette (one native pixel of
+rasterization tolerance). Any visible silhouette or depth contradiction vetoes
+it. Missing depth, occlusion and off-image projections supply no positive
+evidence. Native IDs prevent upsampling from inflating sample counts. The adapter
+chooses the reference with the most corroborated samples, writes
+`conditioning-evidence.json`, and stops before inference if any object lacks 24
+such samples. It never silently falls back to unfiltered target depth.
+
+Filtering changes only model conditioning. Scene context survives, and original
+observation clouds still drive final mesh validation. It does not establish that
+an agreeing surface belongs to the object: a background plane can project inside
+multiple silhouettes. There is deliberately no class-specific minimum height
+that would discard legitimate thin objects.
+
+`stereo_surface.stereo_surface` is a separate experimental RGB stereo proposal,
+not part of the production depth path. It requires declared static content,
+distinct source frames, metric baseline, adequate horizontal rectification,
+texture, disparity uniqueness and left/right consistency. It never fills sensor
+depth or certifies its own output as native measurements. Reflections, repeated
+patterns, calibration and pose error remain unresolved failure modes; successful
+analytic-plane tests do not establish reconstruction quality on recordings.
+
 Development unit/integration fixtures include an analytic box scene and a
 ray-generated platform, stacked cylinder, and rotated concave L. They use known
 mesh priors and are explicitly not tests of learned reconstruction quality.
