@@ -13,7 +13,7 @@ import numpy as np
 import trimesh
 from scipy import ndimage
 
-from lidar_video.reconstruction import rigid
+from lidar_video.camera_validation import rigid
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ class VolumePolicy:
             raise ValueError("Invalid bounded silhouette-volume policy")
 
 
-def checked_views(views):
+def checked_views(views, *, allow_empty=False):
     """Validate masks, source identities and calibrated OpenCV cameras."""
     result = []
     for view in views:
@@ -53,7 +53,7 @@ def checked_views(views):
             or np.any(labels < 0)
             or type(label) is not int
             or label < 1
-            or not np.any(labels == label)
+            or (not np.any(labels == label) and not (allow_empty and not np.any(labels)))
             or type(source) is not int
         ):
             raise ValueError("Nonempty indexed target masks and integer source identities required")
