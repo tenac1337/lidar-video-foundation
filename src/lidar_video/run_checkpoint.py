@@ -16,11 +16,78 @@ SCHEMA = "development-checkpoint-v1"
 MAX_BYTES = 16 * 1024 * 1024
 
 
+def notebook_chunks(payload, chunk_chars=1_100_000):
+    """Emit each piece in a separate cell to avoid notebook output truncation.
+
+    Colab can replace a large cell's saved output with an 'Output hidden' stub,
+    even when the live page displays the data. A saved notebook must still be
+    recovered and hash-verified before acknowledging a checkpoint.
+    """
+    if type(chunk_chars) is not int or not 1 <= chunk_chars <= 1_100_000:
+        raise ValueError("Invalid notebook chunk size")
+    if payload.get("schema") != SCHEMA:
+        raise ValueError("Unexpected checkpoint schema")
+    encoded = json.dumps(payload, ensure_ascii=True)
+    if len(encoded) > 2 * MAX_BYTES:
+        raise ValueError("Checkpoint JSON exceeds transport limit")
+    pieces = [encoded[i : i + chunk_chars] for i in range(0, len(encoded), chunk_chars)]
+    if len(pieces) > 128:
+        raise ValueError("Too many notebook chunks")
+    return [
+        dict(checkpoint_chunk=i, total=len(pieces), sha256=payload["sha256"], text=text)
+        for i, text in enumerate(pieces)
+    ]
+
+
+def payload_from_notebook(notebook, *, expected_sha256):
+    """Read JSON outputs as data only; reject incomplete, mixed or duplicate pieces.
+
+    This checks transport structure. Call restore to verify the archive and every
+    member before acknowledging persistence. Notebook source is never executed.
+    """
+    items = [
+        output.get("data", {}).get("application/json")
+        for cell in notebook.get("cells", [])
+        for output in cell.get("outputs", [])
+    ]
+    items = [x for x in items if isinstance(x, dict) and x.get("sha256") == expected_sha256]
+    if len(items) == 1 and items[0].get("schema") == SCHEMA:
+        return items[0]
+    if not items or len(items) > 128:
+        raise ValueError("Missing or oversized notebook checkpoint")
+    total = items[0].get("total")
+    if type(total) is not int or total != len(items):
+        raise ValueError("Incomplete notebook checkpoint")
+    indices = [x.get("checkpoint_chunk") for x in items]
+    if any(type(i) is not int for i in indices) or set(indices) != set(range(total)):
+        raise ValueError("Duplicate or invalid notebook chunks")
+    if any(
+        x.get("total") != total or not isinstance(x.get("text"), str) or len(x["text"]) > 1_100_000
+        for x in items
+    ):
+        raise ValueError("Invalid notebook chunk content")
+    if sum(len(x["text"]) for x in items) > 2 * MAX_BYTES:
+        raise ValueError("Notebook checkpoint exceeds transport limit")
+    payload = json.loads("".join(x["text"] for x in sorted(items, key=lambda x: x["checkpoint_chunk"])))
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != SCHEMA
+        or payload.get("sha256") != expected_sha256
+    ):
+        raise ValueError("Unexpected checkpoint identity")
+    return payload
+
+
 def safe_name(name):
     if not isinstance(name, str) or not name or "\\" in name:
         raise ValueError("Invalid checkpoint path")
     path = PurePosixPath(name)
-    if path.is_absolute() or ".." in path.parts or str(path) != name or name in {"MANIFEST.json", "checkpoint-receipt.json", "."}:
+    if (
+        path.is_absolute()
+        or ".." in path.parts
+        or str(path) != name
+        or name in {"MANIFEST.json", "checkpoint-receipt.json", "."}
+    ):
         raise ValueError("Invalid checkpoint path")
     return name
 

@@ -6,7 +6,41 @@ import zipfile
 
 import pytest
 
-from lidar_video.run_checkpoint import pack, restore
+from lidar_video.run_checkpoint import notebook_chunks, pack, payload_from_notebook, restore
+
+
+def test_chunked_notebook_roundtrip_and_truncation(tmp_path):
+    (tmp_path / "result").write_text("complete")
+    payload = pack(tmp_path, ["result"], stage="completed")
+    chunks = notebook_chunks(payload, chunk_chars=100)
+    notebook = {"cells": [{"outputs": [{"data": {"application/json": x}}]} for x in reversed(chunks)]}
+    recovered = payload_from_notebook(notebook, expected_sha256=payload["sha256"])
+    assert recovered == payload
+    restore(recovered, tmp_path / "verified", expected_sha256=payload["sha256"])
+    # Colab saved an output-hidden placeholder even though the live page showed it.
+    notebook["cells"][0]["outputs"] = [{"data": {"text/plain": "Output hidden; open in Colab to view."}}]
+    with pytest.raises(ValueError, match="Incomplete"):
+        payload_from_notebook(notebook, expected_sha256=payload["sha256"])
+
+
+def test_rejects_duplicate_mixed_and_tampered_notebook_chunks(tmp_path):
+    (tmp_path / "result").write_text("complete")
+    payload = pack(tmp_path, ["result"], stage="completed")
+    chunks = notebook_chunks(payload, chunk_chars=100)
+
+    def notebook(pieces):
+        return {"cells": [{"outputs": [{"data": {"application/json": x}}]} for x in pieces]}
+
+    with pytest.raises(ValueError, match="Duplicate"):
+        payload_from_notebook(notebook([chunks[0], *chunks[:-1]]), expected_sha256=payload["sha256"])
+    with pytest.raises(ValueError, match="Incomplete"):
+        payload_from_notebook(
+            notebook([dict(chunks[0], sha256="0" * 64), *chunks[1:]]), expected_sha256=payload["sha256"]
+        )
+    forged = dict(payload, sha256="0" * 64)
+    forged_chunks = [dict(x, sha256=payload["sha256"]) for x in notebook_chunks(forged, chunk_chars=100)]
+    with pytest.raises(ValueError, match="identity"):
+        payload_from_notebook(notebook(forged_chunks), expected_sha256=payload["sha256"])
 
 
 def test_notebook_roundtrip_preserves_binary_and_refuses_overwrite(tmp_path):

@@ -132,6 +132,13 @@ is persistence verified. The transport rejects path escapes, member tampering,
 oversized archives and overwriting an existing destination. Credentials and model
 weights must not be included in the explicit artifact list.
 
+Large live Colab outputs can be replaced with an `Output hidden` stub when the
+notebook is saved. Use `run_checkpoint.notebook_chunks(payload)` and display each
+returned JSON object in a **separate cell**. Recover with
+`payload_from_notebook(notebook, expected_sha256=recorded_hash)`, then call
+`restore` as above. Missing, duplicate or mixed pieces fail recovery. Live display
+and the notebook's saved indicator still do not establish checkpoint durability.
+
 The discovery API accepts a `checkpoint(output_directory, stage)` callback after
 each completed view and after association. A runtime orchestrator can pause in
 that callback until the local copy is verified. Saving a ZIP in `/content`,
