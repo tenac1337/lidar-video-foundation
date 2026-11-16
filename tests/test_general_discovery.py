@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from test_general_scene import fixture
 
-from lidar_video.general_discovery import discover
+from lidar_video.general_discovery import discover, support_depth_diagnostics
 from lidar_video.run_checkpoint import pack, restore
 
 
@@ -47,6 +47,32 @@ def test_discovery_preserves_raw_masks_and_source_ids_without_mesh_generation(tm
     tracks = json.loads((restored / "p00-nms-0.8/tracks.json").read_text())
     assert [o["source_frame"] for o in tracks["object_000"]["observations"]] == [11, 43, 72]
     assert not list(restored.rglob("*.ply"))
+    assert (restored / "p00-nms-0.8/support-depth-diagnostic.json").exists()
+
+
+def test_support_depth_diagnostic_separates_raised_and_plane_returns_without_mutation():
+    data, detections, _ = fixture()
+    raised = support_depth_diagnostics(data, detections)
+    assert all(r["fraction_above_15mm"] == 1 for r in raised["rows"])
+    # Same RGB masks and confident depth, but sensor returns the support behind them.
+    # This could also represent a legitimate flat object; never infer absence.
+    data["depth"][:] = 0.8
+    original = data["depth"].copy()
+    flat = support_depth_diagnostics(data, detections)
+    assert len(flat["rows"]) == 6
+    assert all(r["fraction_within_6mm_of_plane"] == 1 for r in flat["rows"])
+    assert all(not r["object_surface_confirmed"] for r in flat["rows"])
+    np.testing.assert_array_equal(original, data["depth"])
+
+
+def test_support_depth_diagnostic_does_not_fill_missing_background():
+    data, detections, _ = fixture()
+    for frame, items in detections.items():
+        occupied = np.logical_or.reduce([item["mask"] for item in items])
+        data["confidence"][frame][~occupied] = 0
+    result = support_depth_diagnostics(data, detections)
+    assert len(result["rows"]) == 6
+    assert all("unresolved" in row and "median_height_m" not in row for row in result["rows"])
 
 
 def test_detector_failure_retains_completed_view_and_closes_worker(tmp_path):

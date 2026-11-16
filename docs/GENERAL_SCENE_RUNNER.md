@@ -145,3 +145,12 @@ that callback until the local copy is verified. Saving a ZIP in `/content`,
 displaying a download link, or reporting that a callback ran is insufficient proof
 of durable storage. Preserve failed attempts and their raw proposals before any
 new development condition; never silently rerun into the same output directory.
+
+Each discovery condition also writes `support-depth-diagnostic.json`. Confident
+sensor returns inside an RGB mask do not necessarily describe the object: they
+may lie on a nearby support. The diagnostic fits a horizontal plane in an
+8-native-pixel ring excluding all proposal masks and reports native sample counts
+and height distributions. Missing background evidence stays unresolved. Plane
+identity is uncertain, and thin objects may legitimately lie near it, so these
+numbers neither reject objects nor certify their surfaces. They never alter
+measured depth or relax the existing association and mesh validation checks.

@@ -10,13 +10,77 @@ import time
 from collections import Counter
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PIL import Image
 
 from lidar_video.capture import load_capture, normalize, write_json
 from lidar_video.general_perception import disambiguate_masks
 from lidar_video.general_run import digest
-from lidar_video.general_scene import InstancePolicy, associate_instances
+from lidar_video.general_scene import InstancePolicy, associate_instances, observation, world_points
+from lidar_video.geometry import fit_support
+from lidar_video.native_depth import native_shape, sample_ids
+from lidar_video.object_evidence import unique_points
+
+
+def support_depth_diagnostics(data, cleaned):
+    """Distinguish valid sensor returns from evidence of an object's 3D surface.
+
+    Fit a nearby horizontal background patch, excluding every proposal mask.
+    This is a diagnostic, not support inference or an object rejection rule:
+    a thin object can legitimately lie near that plane, and the patch might
+    belong to a different support. Never replace depth or fill missing samples.
+    The capture uses the runner's Z-up world convention.
+    """
+    rows = []
+    h, w = data["depth"].shape[1:]
+    nh, nw = native_shape(data)
+    ry, rx = max(1, round(8 * h / nh)), max(1, round(8 * w / nw))
+    policy = InstancePolicy()
+    for frame, items in sorted(cleaned.items()):
+        occupied = np.zeros((h, w), bool)
+        for item in items:
+            occupied |= item["mask"]
+        ids, world = sample_ids(data, frame), world_points(data, frame)
+        good = (data["depth"][frame] > 0) & (data["confidence"][frame] >= 1)
+        good &= np.isfinite(world).all(axis=2)
+        for index, item in enumerate(items):
+            obs = observation(data, frame, item["mask"], policy)
+            if not obs["quality"]["passed"]:
+                continue
+            ring = cv2.dilate(item["mask"].astype("uint8"), np.ones((2 * ry + 1, 2 * rx + 1), "uint8"))
+            background = unique_points(world, ids, ring.astype(bool) & ~occupied & good)
+            row = dict(
+                frame=frame,
+                source_frame=int(data["source_frame"][frame]),
+                label=index + 1,
+                native_points=len(obs["cloud"]),
+                background_native_points=len(background),
+                object_surface_confirmed=False,
+            )
+            if len(background) < 100:
+                row["unresolved"] = "Insufficient nearby native background samples"
+            else:
+                try:
+                    transform, rmse = fit_support(background)
+                except ValueError as error:
+                    row["unresolved"] = str(error)
+                else:
+                    height = obs["cloud"] @ transform[2, :3] + transform[2, 3]
+                    row.update(
+                        nearby_plane_from_world=transform.tolist(),
+                        plane_rmse_m=rmse,
+                        median_height_m=float(np.median(height)),
+                        fraction_within_6mm_of_plane=float(np.mean(abs(height) <= 0.006)),
+                        fraction_above_15mm=float(np.mean(height > 0.015)),
+                    )
+            rows.append(row)
+    return dict(
+        scope="Nearby planar-patch diagnostic; not a support identity or object-presence certificate",
+        ring_radius_native_pixels=8,
+        thresholds_are_diagnostic=True,
+        rows=rows,
+    )
 
 
 def associate_condition(data, raw, out, duplicate_iou):
@@ -55,6 +119,7 @@ def associate_condition(data, raw, out, duplicate_iou):
     write_json(out / "label-map.json", mapping)
     write_json(out / "association.json", audit)
     write_json(out / "tracks.json", tracks)
+    write_json(out / "support-depth-diagnostic.json", support_depth_diagnostics(data, cleaned))
     return dict(
         duplicate_iou=duplicate_iou,
         raw_counts={str(k): len(v) for k, v in raw.items()},
