@@ -308,9 +308,18 @@ def run_asset_scene_program(
         if simulate:
             from lidar_video.simulation import simulate as simulate_native
 
+            # Preserve semantic edges, but audit physical relations against the
+            # explicit support allowances used by the constructive compiler.
+            relation_graph = copy.deepcopy(sample)
+            converted = iter(proxy["edges"])
+            relation_graph["edges"] = [
+                copy.deepcopy(next(converted)) if e["relation"] in RELATIONS else copy.deepcopy(e)
+                for e in sample["edges"]
+            ]
             report, replay = simulate_native(
                 sample, folder / "simulation", frames=frames, fps=fps, asset_root=out,
                 mass_distribution=mass_distribution, contact_policy=contact_policy,
+                relation_graph=relation_graph,
             )
             physics.append(
                 dict(
@@ -321,6 +330,7 @@ def run_asset_scene_program(
                     passive_motion=report["passive_motion"],
                     collision_mass_allocation=report["collision_mass_allocation"],
                     contact_policy=report["contact_policy"],
+                    scene_relations=report["scene_relations"],
                 )
             )
     result.update(

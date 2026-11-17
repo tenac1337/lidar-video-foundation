@@ -13,6 +13,7 @@ from lidar_video.capture import write_json
 from lidar_video.collision_mass import allocate_collision_mass
 from lidar_video.contact_policy import POLICY_NAME, configure_mesh_contacts
 from lidar_video.passive_motion import measure_passive_motion
+from lidar_video.relation_audit import audit_scene_relations
 from lidar_video.synthetic import add_lighting, camera_axes
 
 
@@ -25,11 +26,20 @@ def simulate(
     *,
     mass_distribution="collision_volume",
     contact_policy=None,
+    relation_graph=None,
 ):
     if mass_distribution not in {"collision_volume", "equal_parts"}:
         raise ValueError("Unknown collision mass distribution")
     if contact_policy not in {None, POLICY_NAME}:
         raise ValueError("Unknown rigid-mesh contact policy")
+    if relation_graph is not None:
+        def envelope_bindings(value):
+            return {
+                n["id"]: (n["kind"], tuple(n["size_m"]))
+                for n in value["nodes"] if n["kind"] in {"object", "support"}
+            }
+        if envelope_bindings(graph) != envelope_bindings(relation_graph):
+            raise ValueError("Relation audit must use the exported physical body envelopes")
     mass_audit = {}
     out = Path(out)
     out.mkdir(parents=True, exist_ok=False)
@@ -184,6 +194,9 @@ def simulate(
         report["passive_motion"] = measure_passive_motion(
             model, saved, [n["id"] for n in physical if n["kind"] == "object"]
         )
+        report["scene_relations"] = audit_scene_relations(
+            model, saved, graph if relation_graph is None else relation_graph
+        )
     if (
         report["warnings"]
         or report["max_penetration_m"] > 0.005
@@ -231,6 +244,7 @@ def simulate(
             max_penetration_m=report["max_penetration_m"],
             scope="native engine/replay consistency; passive motion reported separately, not certified stable",
             passive_motion=report["passive_motion"],
+            scene_relations=report["scene_relations"],
             collision_mass_allocation=mass_audit,
             contact_policy=contact_audit,
             physical_priors=dict(
