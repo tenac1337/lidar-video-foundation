@@ -27,6 +27,7 @@ def simulate(
     mass_distribution="collision_volume",
     contact_policy=None,
     relation_graph=None,
+    spatial_contract=None,
 ):
     if mass_distribution not in {"collision_volume", "equal_parts"}:
         raise ValueError("Unknown collision mass distribution")
@@ -195,7 +196,8 @@ def simulate(
             model, saved, [n["id"] for n in physical if n["kind"] == "object"]
         )
         report["scene_relations"] = audit_scene_relations(
-            model, saved, graph if relation_graph is None else relation_graph
+            model, saved, graph if relation_graph is None else relation_graph,
+            spatial_contract=spatial_contract,
         )
     if (
         report["warnings"]

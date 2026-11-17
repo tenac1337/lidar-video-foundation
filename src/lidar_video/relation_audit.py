@@ -14,7 +14,14 @@ from lidar_video.scene_program import RELATIONS, as_networkx
 
 
 def audit_scene_relations(
-    model, saved, graph, *, position_tolerance_m=0.001, contact_tolerance_m=0.001, start_time_s=0.0
+    model,
+    saved,
+    graph,
+    *,
+    position_tolerance_m=0.001,
+    contact_tolerance_m=0.001,
+    start_time_s=0.0,
+    spatial_contract=None,
 ):
     """Check every selected saved pose without stepping or changing the source.
 
@@ -60,10 +67,71 @@ def audit_scene_relations(
         if body <= 0 or size.shape != (3,) or not np.isfinite(size).all() or np.any(size <= 0):
             raise ValueError(f"Named native body and positive envelope required: {name}")
         bodies[name], corners[name] = body, signs * size / 2
+    regions, footprints, separation = {}, {}, []
+    if spatial_contract is not None:
+        if spatial_contract.get("version") != 1 or spatial_contract.get("physical_envelopes") != {
+            n: list(node["size_m"]) for n, node in physical.items()
+        }:
+            raise ValueError("Spatial contract must match the physical body envelopes")
+        regions = spatial_contract["regions"]
+        footprints = spatial_contract["footprints"]
+        for name, region in regions.items():
+            if name not in network or region["parent"] not in bodies:
+                raise ValueError("Invalid region binding")
+            bounds = np.asarray(region["local_bounds_xy_m"], float)
+            if bounds.shape != (2, 2) or not np.isfinite(bounds).all() or np.any(bounds[0] >= bounds[1]):
+                raise ValueError("Invalid region bounds")
+            for field, shape in [
+                ("reference_parent_position_m", (3,)),
+                ("reference_parent_rotation", (3, 3)),
+            ]:
+                value = np.asarray(region[field], float)
+                if value.shape != shape or not np.isfinite(value).all():
+                    raise ValueError("Invalid region reference transform")
+            if not np.isfinite(region["local_z_m"]):
+                raise ValueError("Invalid region height")
+        for key, footprint in footprints.items():
+            index = int(key)
+            if not 0 <= index < len(graph["edges"]):
+                raise ValueError("Invalid footprint edge index")
+            edge = graph["edges"][index]
+            if (
+                edge["relation"] != "occupies"
+                or footprint["source"] != edge["source"]
+                or footprint["target"] != edge["target"]
+                or edge["source"] not in bodies
+                or edge["target"] not in regions
+            ):
+                raise ValueError("Invalid footprint binding")
+            points = np.asarray(footprint["local_points_m"], float)
+            if points.ndim != 2 or points.shape[1] != 3 or not len(points) or not np.isfinite(points).all():
+                raise ValueError("Finite 3D footprint points required")
+        for witness in spatial_contract["separation_witnesses"]:
+            if (
+                witness["source"] not in bodies
+                or witness["target"] not in bodies
+                or witness["source"] == witness["target"]
+                or witness["axis"] not in ("x", "y", "z")
+                or witness["sign"] not in (-1, 1)
+            ):
+                raise ValueError("Invalid separation witness")
+            penetration = witness.get("support_penetration_m", 0)
+            if not np.isfinite(penetration) or penetration < 0:
+                raise ValueError("Invalid separation overlap allowance")
+            separation.append(
+                dict(witness, violated_samples=0, first_violation_time_s=None, max_geometric_residual_m=0.0)
+            )
     checked, unchecked = [], []
     for index, edge in enumerate(graph["edges"]):
         a, b, relation = edge["source"], edge["target"], edge["relation"]
-        if relation not in RELATIONS or a not in bodies or b not in bodies:
+        semantic = (
+            relation == "occupies"
+            and str(index) in footprints
+            or relation == "part_of"
+            and a in regions
+            and regions[a]["parent"] == b
+        )
+        if not semantic and (relation not in RELATIONS or a not in bodies or b not in bodies):
             unchecked.append(
                 dict(
                     edge_index=index,
@@ -94,6 +162,12 @@ def audit_scene_relations(
                 missing_contact_samples=0,
             )
         )
+        if semantic:
+            checked[-1]["evidence"] = (
+                "Asset-derived band or envelope in calibrated region"
+                if relation == "occupies"
+                else regions[a]["evidence"]
+            )
         if relation == "on":
             same_rigid_body = model.body_weldid[bodies[a]] == model.body_weldid[bodies[b]]
             checked[-1]["contact_check"] = (
@@ -123,7 +197,36 @@ def audit_scene_relations(
             edge = graph["edges"][record["edge_index"]]
             a, b, relation = record["source"], record["target"], record["relation"]
             missing = False
-            if relation in {"on", "inside"}:
+            if relation == "part_of":
+                region = regions[a]
+                bounds = np.asarray(region["local_bounds_xy_m"])
+                half = np.asarray(physical[b]["size_m"]) / 2
+                local = np.array([[x, y, region["local_z_m"]] for x in bounds[:, 0] for y in bounds[:, 1]])
+                current = local @ data.xmat[bodies[b]].reshape(3, 3).T + data.xpos[bodies[b]]
+                reference = (
+                    local @ np.asarray(region["reference_parent_rotation"]).T
+                    + region["reference_parent_position_m"]
+                )
+                residual = max(
+                    float(np.max(-half[:2] - bounds[0])),
+                    float(np.max(bounds[1] - half[:2])),
+                    abs(region["local_z_m"] - half[2]),
+                    float(np.max(np.abs(current - reference))),
+                    0,
+                )
+            elif relation == "occupies":
+                region = regions[b]
+                parent = bodies[region["parent"]]
+                points = np.asarray(footprints[str(record["edge_index"])]["local_points_m"])
+                points = points @ data.xmat[bodies[a]].reshape(3, 3).T + data.xpos[bodies[a]]
+                local = (points - data.xpos[parent]) @ data.xmat[parent].reshape(3, 3)
+                bounds = np.asarray(region["local_bounds_xy_m"])
+                residual = max(
+                    float(np.max(bounds[0] - local[:, :2].min(axis=0))),
+                    float(np.max(local[:, :2].max(axis=0) - bounds[1])),
+                    0,
+                )
+            elif relation in {"on", "inside"}:
                 parent = bodies[b]
                 local = (world[a] - data.xpos[parent]) @ data.xmat[parent].reshape(3, 3)
                 low, high = local.min(axis=0), local.max(axis=0)
@@ -163,7 +266,24 @@ def audit_scene_relations(
                 record["violated_samples"] += 1
                 if record["first_violation_time_s"] is None:
                     record["first_violation_time_s"] = float(time[frame])
+        extents = {n: (v.min(axis=0), v.max(axis=0)) for n, v in world.items()} if separation else {}
+        for record in separation:
+            a, b = record["source"], record["target"]
+            axis = "xyz".index(record["axis"])
+            low_side, high_side = (a, b) if record["sign"] == 1 else (b, a)
+            residual = max(
+                float(extents[low_side][1][axis] - extents[high_side][0][axis])
+                - record.get("support_penetration_m", 0),
+                0,
+            )
+            record["max_geometric_residual_m"] = max(record["max_geometric_residual_m"], residual)
+            if residual > position_tolerance_m:
+                record["violated_samples"] += 1
+                if record["first_violation_time_s"] is None:
+                    record["first_violation_time_s"] = float(time[frame])
     for record in checked:
+        record["preserved_at_all_checked_samples"] = record["violated_samples"] == 0
+    for record in separation:
         record["preserved_at_all_checked_samples"] = record["violated_samples"] == 0
     return dict(
         sampled_frames=len(selected),
@@ -177,5 +297,13 @@ def audit_scene_relations(
         all_checked_relations_preserved=bool(checked)
         and all(r["preserved_at_all_checked_samples"] for r in checked),
         complete_edge_coverage=bool(checked) and not unchecked,
+        separation_audit=dict(
+            supplied=spatial_contract is not None,
+            witnesses=separation,
+            all_witnesses_preserved=all(r["preserved_at_all_checked_samples"] for r in separation)
+            if spatial_contract is not None
+            else None,
+            scope="Frozen world-axis separation branches of rotated envelopes; branch failure is not proof of mesh collision",
+        ),
         scope="Sampled rotated-envelope geometry and direct-body native contact candidates; no load-bearing, force-closure, task-success or continuous-time guarantee",
     )

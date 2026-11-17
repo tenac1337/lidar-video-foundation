@@ -21,7 +21,7 @@ def _digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def _support_band_bounds(meshes, height):
+def _support_band_points(meshes, height):
     """Bound all visual/collision triangles below a visual-base-relative plane.
 
     Include edge/plane intersections: selecting only low vertices would miss
@@ -41,18 +41,24 @@ def _support_band_bounds(meshes, height):
     for mesh in meshes:
         vertices = np.asarray(mesh.vertices)
         used = vertices[np.unique(mesh.faces)]
-        points.append(used[used[:, 2] <= plane, :2])
+        points.append(used[used[:, 2] <= plane])
         left, right = vertices[mesh.edges_unique[:, 0]], vertices[mesh.edges_unique[:, 1]]
         crossing = ((left[:, 2] < plane) & (right[:, 2] > plane)) | (
             (right[:, 2] < plane) & (left[:, 2] > plane)
         )
         left, right = left[crossing], right[crossing]
         fraction = (plane - left[:, 2]) / (right[:, 2] - left[:, 2])
-        points.append((left + fraction[:, None] * (right - left))[:, :2])
+        points.append(left + fraction[:, None] * (right - left))
     points = np.concatenate(points)
-    bounds = np.array([points.min(axis=0), points.max(axis=0)])
-    if not np.isfinite(bounds).all() or np.any(bounds[0] >= bounds[1]):
+    bounds = np.array([points[:, :2].min(axis=0), points[:, :2].max(axis=0)])
+    if not np.isfinite(points).all() or np.any(bounds[0] >= bounds[1]):
         raise ValueError("Support band must have a finite nonzero XY footprint")
+    return points, plane
+
+
+def _support_band_bounds(meshes, height):
+    points, plane = _support_band_points(meshes, height)
+    bounds = np.array([points[:, :2].min(axis=0), points[:, :2].max(axis=0)])
     return bounds, plane
 
 
@@ -300,6 +306,14 @@ def run_asset_scene_program(
         json.dumps(dict(samples=complete, attempts=result["attempts"]), indent=2) + "\n"
     )
     physics = []
+    spatial_contract = None
+    if simulate:
+        from lidar_video.spatial_contract import prepare_spatial_contract
+
+        spatial_contract = prepare_spatial_contract(
+            graph, out, jitter=jitter, support_tolerance=support_tolerance
+        )
+        (out / "spatial_contract.json").write_text(json.dumps(spatial_contract, indent=2) + "\n")
     for i, sample in enumerate(complete):
         folder = out / "samples" / f"{i:03d}"
         folder.mkdir(parents=True)
@@ -320,6 +334,7 @@ def run_asset_scene_program(
                 sample, folder / "simulation", frames=frames, fps=fps, asset_root=out,
                 mass_distribution=mass_distribution, contact_policy=contact_policy,
                 relation_graph=relation_graph,
+                spatial_contract=spatial_contract,
             )
             physics.append(
                 dict(
