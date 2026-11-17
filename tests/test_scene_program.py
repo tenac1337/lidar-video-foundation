@@ -210,3 +210,21 @@ def test_inside_margin_and_invalid_recorded_support():
     graph["nodes"][2]["placement_bounds_m"][1][2] = 0.2
     with pytest.raises(ValueError, match="support constraint"):
         compile_scene_program(graph)
+
+
+@pytest.mark.parametrize("offset,valid", [(5e-9, True), (2e-8, False)])
+def test_zero_jitter_replay_uses_declared_geometric_tolerance_without_snapping(offset, valid):
+    graph = dict(
+        nodes=[
+            node("table", [0, 0, -0.05], [1, 1, 0.1], fixed=True),
+            node("object", [0, 0, 0.05 + offset], [0.1, 0.1, 0.1]),
+        ],
+        edges=[dict(source="object", target="table", relation="on")],
+    )
+    if not valid:
+        with pytest.raises(ValueError, match="support constraint"):
+            compile_scene_program(graph, jitter=0)
+        return
+    program = compile_scene_program(graph, jitter=0)
+    assert program.sample(randomize=False)["nodes"] == graph["nodes"]
+    assert program.sample(randomize=True, seed=9)["nodes"] == graph["nodes"]

@@ -58,6 +58,14 @@ class SceneProgram:
     witnesses: list
 
     def _solve(self, objective, bounds):
+        # A fixed domain contains one candidate, so validate that candidate with
+        # the public geometric tolerance. Sending it through an LP applies a
+        # different feasibility tolerance and can reject otherwise valid replay.
+        domain = np.asarray(bounds, float)
+        if np.all(domain[:, 0] == domain[:, 1]):
+            candidate = domain[:, 0].copy()
+            self.validate_positions(candidate)
+            return candidate
         result = linprog(
             objective,
             A_ub=self.inequalities if len(self.inequalities) else None,
