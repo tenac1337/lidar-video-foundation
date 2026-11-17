@@ -194,7 +194,7 @@ def test_bounded_pose_refinement_preserves_shape_and_support_height():
         refine_support_pose(displaced, views[:2], np.eye(4), max_translation_m=0.5)
 
 
-@pytest.mark.parametrize("method", ["support_pose", "support_shape"])
+@pytest.mark.parametrize("method", ["support_pose", "support_shape", "silhouette_volume"])
 def test_portable_runner_writes_evidence_and_refuses_overwrite(tmp_path, method):
     import json
 
@@ -229,10 +229,19 @@ def test_portable_runner_writes_evidence_and_refuses_overwrite(tmp_path, method)
         construction_sources=[11, 24],
         validation_sources=[37],
     )
+    if method == "silhouette_volume":
+        manifest.update(connected_support=True, policy=dict(pitch_m=0.002, mask_margin_pixels=0))
     path = tmp_path / "input.json"
     path.write_text(json.dumps(manifest))
     result = run(path, tmp_path / "output")
-    assert result["proposal_evidence"]["support_height_preserved"]
+    if method == "silhouette_volume":
+        evidence = result["proposal_evidence"]
+        assert evidence["touches_support"] and evidence["connected_components"] == 1
+        assert evidence["component_selection"]["selection_by_size"] is False
+        assert evidence["surface_cleanup"]["occupancy_modified"] is False
+        assert json.loads((tmp_path / "output/manifest.json").read_text())["connected_support"] is True
+    else:
+        assert result["proposal_evidence"]["support_height_preserved"]
     if method == "support_pose":
         assert result["proposal_evidence"]["shape_and_scale_preserved"]
     assert (tmp_path / "output/proposal-world.ply").is_file()

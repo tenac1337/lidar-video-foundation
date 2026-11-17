@@ -53,6 +53,7 @@ def run(manifest_path, output):
                 config["support_from_world"],
                 policy=VolumePolicy(**config.get("policy", {})),
                 static_scene=config.get("static_scene", False),
+                connected_support=config.get("connected_support", False),
             )
         else:
             raise ValueError("Unknown proposal_method")

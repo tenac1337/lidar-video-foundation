@@ -14,6 +14,7 @@ import trimesh
 from scipy import ndimage
 
 from lidar_video.camera_validation import rigid
+from lidar_video.voxel_surface import cancel_opposed_faces
 
 
 @dataclass(frozen=True)
@@ -173,7 +174,13 @@ def anchor_connected_volume(occupied, lower, pitch, landmarks, *, tolerance_m=0.
 
 
 def silhouette_volume(
-    views, support_from_world, *, policy=None, static_scene=False, connected_landmarks=None
+    views,
+    support_from_world,
+    *,
+    policy=None,
+    static_scene=False,
+    connected_landmarks=None,
+    connected_support=False,
 ):
     """Construct a new visual hull from two or more views, without a learned seed.
 
@@ -182,11 +189,14 @@ def silhouette_volume(
     This proposal requires a fully framed object in every construction camera;
     masks at image edges abstain and the volume stays inside every camera.
     Disconnected components are retained by default. Explicit construction-only
-    landmarks may identify one component under a connected-object hypothesis;
+    landmarks or the unique component touching the supplied support layer may
+    identify one component under an explicit connected-object hypothesis;
     no component is selected by size. Top/side truncation still abstains.
     """
     if static_scene is not True:
         raise ValueError("Explicit static_scene=True required")
+    if type(connected_support) is not bool or (connected_support and connected_landmarks is not None):
+        raise ValueError("Use either a connected-support prior or construction landmarks")
     policy = policy or VolumePolicy()
     views = checked_views(views)
     if len(views) < 2 or not distinct_centers(views, policy.min_baseline_m):
@@ -270,6 +280,11 @@ def silhouette_volume(
     if count < policy.min_voxels:
         raise ValueError("Construction silhouettes leave insufficient occupied volume")
     component_selection = None
+    if connected_support:
+        occupied, component_selection = support_connected_volume(occupied)
+        count = int(occupied.sum())
+        if count < policy.min_voxels:
+            raise ValueError("Support-connected volume has insufficient occupied cells")
     if connected_landmarks is not None:
         landmarks = np.asarray(connected_landmarks, float)
         if landmarks.ndim != 2 or landmarks.shape[1] != 3:
@@ -283,12 +298,14 @@ def silhouette_volume(
         raise ValueError("Shape reaches a declared bound; geometry is not resolved")
     _, components = ndimage.label(occupied, structure=ndimage.generate_binary_structure(3, 1))
     mesh = trimesh.voxel.ops.matrix_to_marching_cubes(occupied, pitch=pitch)
+    mesh, surface_cleanup = cancel_opposed_faces(mesh)
     mesh.apply_translation(lower + pitch / 2)
     mesh.apply_transform(inverse)
     if not mesh.is_watertight or not np.isfinite(mesh.vertices).all():
         raise ValueError("Visual hull failed finite closed-mesh validation")
     return mesh, dict(
         method="bounded_calibrated_silhouette_volume_v1",
+        surface_cleanup=surface_cleanup,
         component_selection=component_selection,
         policy=asdict(policy),
         construction_sources=[v["source_frame"] for v in views],
@@ -307,6 +324,31 @@ def silhouette_volume(
         + ([component_selection["prior"]] if component_selection else []),
         metric_object_accuracy_established=False,
         accepted=False,
+    )
+
+
+def support_connected_volume(occupied):
+    """Select the unique 6-connected component touching the support layer.
+
+    This is an explicit single-connected-supported-object hypothesis. Multiple
+    support components are ambiguous; size never resolves that ambiguity.
+    Detached parts are discarded with counts, not joined or filled.
+    """
+    occupied = np.asarray(occupied)
+    if occupied.ndim != 3 or occupied.dtype != bool or not occupied.size or not occupied.any():
+        raise ValueError("Nonempty boolean voxel occupancy required")
+    labels, count = ndimage.label(occupied, structure=ndimage.generate_binary_structure(3, 1))
+    touching = np.unique(labels[:, :, 0])
+    touching = touching[touching > 0]
+    if len(touching) != 1:
+        raise ValueError("Support-connected component is absent or ambiguous")
+    selected = labels == touching[0]
+    return selected, dict(
+        prior="one connected object touching the declared support layer",
+        input_components=int(count),
+        selected_component=int(touching[0]),
+        discarded_cells=int(occupied.sum() - selected.sum()),
+        selection_by_size=False,
     )
 
 

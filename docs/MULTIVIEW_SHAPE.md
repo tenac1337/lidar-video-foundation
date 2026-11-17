@@ -61,3 +61,21 @@ the result. Ambiguous or inconsistent anchors cause abstention; discarded cells
 and the prior are recorded. The selected component must still pass all bound,
 finite mesh, watertightness and subsequent silhouette checks. Do not supply
 landmarks derived from the reserved veto view.
+
+Alternatively, set `connected_support: true` in a silhouette-volume manifest
+(or the Python API). This explicitly assumes one connected object touching the
+supplied support plane. Exactly one six-connected component must touch the
+lowest voxel layer; zero or multiple touching components cause abstention.
+Detached components are discarded and their cell count is reported, even if
+they are larger than the supported component. This option is mutually exclusive
+with `connected_landmarks`. It does not resolve wrong masks or instance identity,
+and all bounds, mesh and silhouette checks still apply.
+
+Marching-cubes extraction can produce coincident indexed triangles with opposite
+orientations at ambiguous voxel configurations. The extractor now cancels these
+exact pairs before checking closure. It preserves all vertices and the oriented
+triangle sum; it does not modify occupancy, weld vertices, fill holes or smooth
+surfaces. Same-orientation duplicates and ambiguous multiplicities cause
+abstention. The evidence records removed face indices under `surface_cleanup`.
+This repair and a silhouette pass do not establish visual quality: inspect the
+surface and all available views before promoting a proposal.
