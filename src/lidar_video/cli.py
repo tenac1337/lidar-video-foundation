@@ -24,6 +24,8 @@ def main():
     p.add_argument("--support-tolerance", type=float, default=0.0)
     p.add_argument("--simulate", action="store_true")
     p.add_argument("--frames", type=int, default=30)
+    p.add_argument("--mass-distribution", choices=["collision_volume", "equal_parts"], default="collision_volume")
+    p.add_argument("--contact-policy", choices=["legacy_mesh_support_v1"])
     p = sub.add_parser("trim-collision-padding")
     p.add_argument("graph", type=Path)
     p.add_argument("--out", type=Path, required=True)
@@ -184,6 +186,8 @@ def main():
                 support_tolerance=args.support_tolerance,
                 simulate=args.simulate,
                 frames=args.frames,
+                mass_distribution=args.mass_distribution,
+                contact_policy=args.contact_policy,
             )
         elif args.command == "trim-collision-padding":
             from lidar_video.collision_padding import trim_collision_padding

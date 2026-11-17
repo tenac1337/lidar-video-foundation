@@ -247,6 +247,8 @@ def run_asset_scene_program(
     simulate=False,
     frames=30,
     fps=30,
+    mass_distribution="collision_volume",
+    contact_policy=None,
 ):
     """Emit Scenic, complete sampled graphs, copied assets and optional native rollouts."""
     path, out = Path(graph_file).resolve(), Path(out).resolve()
@@ -307,7 +309,8 @@ def run_asset_scene_program(
             from lidar_video.simulation import simulate as simulate_native
 
             report, replay = simulate_native(
-                sample, folder / "simulation", frames=frames, fps=fps, asset_root=out
+                sample, folder / "simulation", frames=frames, fps=fps, asset_root=out,
+                mass_distribution=mass_distribution, contact_policy=contact_policy,
             )
             physics.append(
                 dict(
@@ -316,6 +319,8 @@ def run_asset_scene_program(
                     max_penetration_m=report["max_penetration_m"],
                     replay=replay,
                     passive_motion=report["passive_motion"],
+                    collision_mass_allocation=report["collision_mass_allocation"],
+                    contact_policy=report["contact_policy"],
                 )
             )
     result.update(

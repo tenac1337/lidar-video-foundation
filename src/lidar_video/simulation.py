@@ -10,11 +10,27 @@ import numpy as np
 from roboskills.tools.mujoco import engine
 
 from lidar_video.capture import write_json
+from lidar_video.collision_mass import allocate_collision_mass
+from lidar_video.contact_policy import POLICY_NAME, configure_mesh_contacts
 from lidar_video.passive_motion import measure_passive_motion
 from lidar_video.synthetic import add_lighting, camera_axes
 
 
-def simulate(graph, out, frames=60, fps=30, asset_root=None):
+def simulate(
+    graph,
+    out,
+    frames=60,
+    fps=30,
+    asset_root=None,
+    *,
+    mass_distribution="collision_volume",
+    contact_policy=None,
+):
+    if mass_distribution not in {"collision_volume", "equal_parts"}:
+        raise ValueError("Unknown collision mass distribution")
+    if contact_policy not in {None, POLICY_NAME}:
+        raise ValueError("Unknown rigid-mesh contact policy")
+    mass_audit = {}
     out = Path(out)
     out.mkdir(parents=True, exist_ok=False)
     bodies, geom_to_node = [], {}
@@ -40,6 +56,16 @@ def simulate(graph, out, frames=60, fps=30, asset_root=None):
                 raise ValueError("asset_root is required for relative graph meshes")
             has_meshes = True
             paths = [node["mesh_path"], *node["collision_paths"]]
+            sources = [(Path(asset_root) / p).resolve() for p in paths]
+            if any(not p.is_relative_to(Path(asset_root).resolve()) for p in sources):
+                raise ValueError("Mesh path escapes asset_root")
+            if mass_distribution == "collision_volume":
+                component_masses, mass_audit[node["id"]] = allocate_collision_mass(
+                    sources[1:], node.get("mass_kg", 0.08)
+                )
+            else:
+                component_masses = [node.get("mass_kg", 0.08) / (len(paths) - 1)] * (len(paths) - 1)
+                mass_audit[node["id"]] = dict(method="legacy_equal_parts")
             parts = []
             for i, relative in enumerate(paths):
                 source = (Path(asset_root) / relative).resolve()
@@ -60,7 +86,7 @@ def simulate(graph, out, frames=60, fps=30, asset_root=None):
                 if i == 0:
                     part.update(contype=0, conaffinity=0, mass=0, group=2)
                 else:
-                    part.update(mass=node.get("mass_kg", 0.08) / (len(paths) - 1), group=3, rgba=[0, 0, 0, 0])
+                    part.update(mass=float(component_masses[i - 1]), group=3, rgba=[0, 0, 0, 0])
                 parts.append(part)
         if node.get("checkerboard"):
             # Texture the support itself: coplanar decorative tile geoms cause z-fighting.
@@ -126,6 +152,7 @@ def simulate(graph, out, frames=60, fps=30, asset_root=None):
     # explicitly stateless between steps so interval replay verifies those fields.
     root = ET.parse(scene).getroot()
     ET.SubElement(root.find("option"), "flag", warmstart="disable")
+    contact_audit = configure_mesh_contacts(root, contact_policy) if contact_policy is not None else None
     # The upstream builder resolves template directories absolutely. Our assets
     # are copied into this run, so make the final MJCF relocatable with the bundle.
     if has_meshes:
@@ -150,6 +177,8 @@ def simulate(graph, out, frames=60, fps=30, asset_root=None):
         video=True,
         preview=4,
     )
+    report["collision_mass_allocation"] = mass_audit
+    report["contact_policy"] = contact_audit
     replay = replay_check(out / "rollout")
     with np.load(out / "rollout/trajectory.npz") as saved:
         report["passive_motion"] = measure_passive_motion(
@@ -202,7 +231,12 @@ def simulate(graph, out, frames=60, fps=30, asset_root=None):
             max_penetration_m=report["max_penetration_m"],
             scope="native engine/replay consistency; passive motion reported separately, not certified stable",
             passive_motion=report["passive_motion"],
-            physical_priors=dict(object_mass_kg=0.08, friction=[0.8, 0.005, 0.0001]),
+            collision_mass_allocation=mass_audit,
+            contact_policy=contact_audit,
+            physical_priors=dict(
+                object_masses_kg={n["id"]: n.get("mass_kg", 0.08) for n in physical if n["kind"] == "object"},
+                friction=[0.8, 0.005, 0.0001],
+            ),
             physics_backend="unmodified roboskills.tools.mujoco.engine",
         ),
     )
