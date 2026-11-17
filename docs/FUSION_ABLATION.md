@@ -41,3 +41,21 @@ uncorroborated samples also means the union is not wholly cross-modally verified
 Point clouds/open surfaces are not complete meshes or simulation-ready assets.
 Coverage counts, successful coordinate tests and a gate rejecting conflicts do
 not establish reconstruction accuracy, qualitative superiority or generalization.
+
+## Automatic stereo partners
+
+`stereo_pairs.select_stereo_neighbors` takes calibrated poses, intrinsics, image
+size, an anchor index, explicit candidate indices and excluded review indices.
+It accepts no RGB or depth data. It ranks candidates by a rectification footprint
+proxy and proximity to a target baseline, then selects at most two partners with
+minimum spatial separation. The result includes every candidate's eligibility,
+rejection reason, geometry and score. Incomplete selection is explicit; the API
+never silently substitutes a neighbor or retries based on reconstruction output.
+
+The footprint is projected coverage of a regular rectified ray grid in the
+original images. It is not measured scene overlap and cannot resolve occlusion,
+texture, motion or inaccurate poses. Horizontal and vertical stereo share the
+same policy. Fix candidate windows, thresholds, exclusions and any separately
+labelled fallback before running reconstruction. Changing partners also changes
+LiDAR corroboration if both modalities share those views; interpret that as a
+whole view-selection policy comparison, not an isolated RGB algorithm change.
