@@ -79,3 +79,31 @@ surfaces. Same-orientation duplicates and ambiguous multiplicities cause
 abstention. The evidence records removed face indices under `surface_cleanup`.
 This repair and a silhouette pass do not establish visual quality: inspect the
 surface and all available views before promoting a proposal.
+
+## RGB landmark refinement of a complete prior
+
+The Python `landmark_refinement.refine_landmark_mesh` API accepts a complete
+incumbent mesh, triangulated RGB world points, construction views, and a rigid
+`support_from_world` transform. Metres and OpenCV camera conventions match the
+other proposal APIs. It requires `static_scene=True`, at least two construction
+camera centers separated by 1 cm, and at least four spatially distributed points.
+Landmarks must belong to one unambiguous object; this API cannot establish their
+identity or reject specular tracks on its own.
+
+The fixed coordinate search minimizes robust point-to-triangle distance plus a
+bounded parameter penalty, subject to silhouette nonregression in every
+construction view. Defaults allow ±8 mm horizontal translation, ±15 degrees yaw,
+and ±15% width/height scaling. Base height, topology, and unseen geometry remain
+those of the prior. One deterministic representative per 3 mm point voxel limits
+cluster dominance; correlated tracks remain correlated evidence. This is prior
+refinement, not complete surface reconstruction from sparse points.
+
+The result records construction scores, point residuals, policy, and the affine
+`world_from_original_world`; `accepted` is always false. Freeze the candidate
+policy and view split before fitting. Pass the single result through
+`multiview_shape.select_candidate` for an additional-view veto, then separately
+check scene placement, inspect visual quality, and transform native visual and
+collision geometry together before dynamics validation. Do not use validation
+views for landmark triangulation or choose a replacement after their veto. No-op
+and small-gain fits should not be described as improvements. None of these
+checks establishes an independent-scene result or an overall qualitative win.
