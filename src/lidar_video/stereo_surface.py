@@ -8,27 +8,55 @@ reflections and pose errors still require independent-view validation.
 import cv2
 import numpy as np
 
-from lidar_video.capture import validate
+from lidar_video.camera_validation import rigid
 
 
-def stereo_surface(data, left, right, *, disparities=256, static_scene=False):
-    validate(data)
-    n, h, w = data["depth"].shape
+def stereo_surface(
+    data,
+    left,
+    right,
+    *,
+    disparities=256,
+    static_scene=False,
+    rectification_alpha=1,
+    allow_vertical_rotation=True,
+):
+    # RGB geometry must not require sensor depth, even for input validation.
+    rgb = np.asarray(data["rgb"])
+    if rgb.ndim != 4 or rgb.shape[-1] != 3 or rgb.dtype != np.uint8 or min(rgb.shape[:3]) < 1:
+        raise ValueError("RGB must be nonempty uint8 (N,H,W,3)")
+    n, h, w = rgb.shape[:3]
+    poses = np.asarray(data["world_from_camera"])
+    if poses.shape != (n, 4, 4):
+        raise ValueError("One rigid camera pose per RGB view required")
+    for pose in poses:
+        rigid(pose, "world_from_camera")
+    k = np.asarray(data["K"])
+    if k.shape not in ((3, 3), (n, 3, 3)) or not np.isfinite(k).all():
+        raise ValueError("Finite per-view pinhole intrinsics required")
+    ks = np.broadcast_to(k, (n, 3, 3))
+    if (
+        np.any(ks[:, (0, 1), (0, 1)] <= 0)
+        or not np.allclose(ks[:, 2], [0, 0, 1])
+        or not np.allclose(ks[:, 0, 1], 0)
+        or not np.allclose(ks[:, 1, 0], 0)
+    ):
+        raise ValueError("Positive unskewed pinhole intrinsics required")
     if static_scene is not True:
         raise ValueError("Static-scene assumption must be explicit")
+    if not np.isfinite(rectification_alpha) or not 0 <= rectification_alpha <= 1:
+        raise ValueError("Rectification alpha must be finite in [0, 1]")
     if any(type(f) is not int or not 0 <= f < n for f in (left, right)) or left == right:
         raise ValueError("Two distinct source views required")
     if type(disparities) is not int or disparities < 16 or disparities % 16 or disparities >= w:
         raise ValueError("Disparities must be a positive multiple of 16 below image width")
     source_ids = data.get("source_frame")
-    if source_ids is None or source_ids[left] == source_ids[right]:
+    if source_ids is None or np.asarray(source_ids).shape != (n,) or source_ids[left] == source_ids[right]:
         raise ValueError("Distinct original source frame IDs required")
-    poses = data["world_from_camera"]
     relative = np.linalg.inv(poses[right]) @ poses[left]
     baseline = float(np.linalg.norm(relative[:3, 3]))
     if baseline < 0.005:
         raise ValueError("Insufficient metric camera baseline")
-    ks = np.broadcast_to(data["K"], (n, 3, 3))
     r1, r2, p1, p2, q, roi1, roi2 = cv2.stereoRectify(
         ks[left],
         None,
@@ -38,10 +66,39 @@ def stereo_surface(data, left, right, *, disparities=256, static_scene=False):
         relative[:3, :3],
         relative[:3, 3],
         flags=cv2.CALIB_ZERO_DISPARITY,
-        alpha=1,
+        alpha=rectification_alpha,
     )
     if abs(p2[1, 3]) > abs(p2[0, 3]):
-        raise ValueError("Vertical rectification is not supported by this horizontal stereo proposal")
+        if not allow_vertical_rotation:
+            raise ValueError("Vertical rectification requires explicit image/camera rotation")
+        # Rotate pixels AND camera axes. This is coordinate normalization, not
+        # pose fitting. Return points and source pixels in the original frames.
+        rotation = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]])
+        rotated_poses = poses.copy()
+        rotated_poses[:, :3, :3] = poses[:, :3, :3] @ rotation
+        rotated_k = ks.copy()
+        rotated_k[:, 0, 0], rotated_k[:, 1, 1] = ks[:, 1, 1], ks[:, 0, 0]
+        rotated_k[:, 0, 2], rotated_k[:, 1, 2] = h - 1 - ks[:, 1, 2], ks[:, 0, 2]
+        rotated = dict(
+            data, rgb=np.rot90(rgb, -1, axes=(1, 2)).copy(), K=rotated_k, world_from_camera=rotated_poses
+        )
+        result = stereo_surface(
+            rotated,
+            left,
+            right,
+            disparities=disparities,
+            static_scene=True,
+            rectification_alpha=rectification_alpha,
+            allow_vertical_rotation=False,
+        )
+        for key in ["depth", "valid"]:
+            result[key] = np.rot90(result[key], 1).copy()
+        pixels = result["source_pixels"].copy()
+        result["source_pixels"] = np.column_stack([pixels[:, 1], h - 1 - pixels[:, 0]])
+        result["metadata"]["vertical_image_rotation_degrees"] = 90
+        result["metadata"]["source_pixels_in_original_grid"] = True
+        result["metadata"]["disparity_grid"] = "Rectified clockwise-rotated image"
+        return result
     if any(roi[2] * roi[3] < 0.02 * w * h for roi in (roi1, roi2)):
         raise ValueError("Insufficient rectified field of view for reliable stereo")
     maps = [
@@ -115,7 +172,7 @@ def stereo_surface(data, left, right, *, disparities=256, static_scene=False):
             baseline_m=baseline,
             disparities=disparities,
             disparity_min=minimum,
-            rectification_alpha=1,
+            rectification_alpha=rectification_alpha,
             rectified_focal_pixels=float(p1[0, 0]),
             valid_rectified_rois=[list(map(int, roi1)), list(map(int, roi2))],
             left_right_tolerance_pixels=1,

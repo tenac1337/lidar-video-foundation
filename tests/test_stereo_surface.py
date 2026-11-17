@@ -49,6 +49,32 @@ def test_reverse_camera_order_recovers_negative_disparity():
     assert np.median(abs(result["depth"][result["valid"]] - 0.8)) < 0.005
 
 
+def test_rgb_path_does_not_require_or_consult_lidar_fields():
+    data = textured_plane()
+    baseline = stereo_surface(data, 0, 1, disparities=32, static_scene=True)
+    for key in ["depth", "confidence", "depth_time"]:
+        del data[key]
+    independent = stereo_surface(data, 0, 1, disparities=32, static_scene=True)
+    np.testing.assert_array_equal(baseline["depth"], independent["depth"])
+
+
+def test_vertical_motion_rotation_preserves_world_geometry_and_source_pixels():
+    data = textured_plane()
+    data["rgb"] = np.rot90(data["rgb"], 1, axes=(1, 2)).copy()
+    data["K"] = np.array([[160.0, 0, 64], [0, 160.0, 127], [0, 0, 1]])
+    rotation = np.array([[0.0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    data["world_from_camera"][:, :3, :3] = rotation
+    result = stereo_surface(data, 0, 1, disparities=32, static_scene=True, rectification_alpha=0)
+    assert result["depth"].shape == (256, 128)
+    assert result["metadata"]["vertical_image_rotation_degrees"] == 90
+    assert len(result["world_points"]) > 10000
+    assert np.median(abs(result["world_points"][:, 2] - 0.8)) < 0.005
+    points = result["world_points"] @ rotation
+    uv = points @ data["K"].T
+    uv = np.rint(uv[:, :2] / uv[:, 2:]).astype(int)
+    np.testing.assert_array_equal(uv, result["source_pixels"])
+
+
 def test_textureless_or_repeated_view_never_fills_surface():
     data = textured_plane()
     data["rgb"][:] = 127
