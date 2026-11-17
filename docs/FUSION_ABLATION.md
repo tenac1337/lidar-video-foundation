@@ -59,3 +59,39 @@ same policy. Fix candidate windows, thresholds, exclusions and any separately
 labelled fallback before running reconstruction. Changing partners also changes
 LiDAR corroboration if both modalities share those views; interpret that as a
 whole view-selection policy comparison, not an isolated RGB algorithm change.
+
+## Metric anchoring and cross-view checks
+
+`metric_fusion.fit_metric_scale` calibrates one bounded multiplicative scale from
+registered native rays. The caller supplies a support mask and must establish
+confidence, view consistency and registration before fitting. Sixteen spatial
+tiles balance robust log-ratio estimates. Alternating 8x8 native pixel blocks
+separate fitting from checking; validation never refits the scale. Insufficient
+support, an out-of-bounds scale or failed residual checks return `scale=None`.
+`candidate_scale` on a rejected result is diagnostic only. The checkerboard
+samples share a recording and sensor errors, so passing is a calibration check,
+not independent accuracy evidence. A calibrated learned prediction is an
+RGB+LiDAR condition; retain the unscaled RGB-only control.
+
+`sample_registered_depth` handles co-located pinhole grids with nearest samples;
+out-of-image rays stay unknown rather than copying border pixels.
+`smooth_support` removes depth jumps and incomplete neighborhoods. Smoothness and
+sensor confidence do not prove that a depth belongs to the visible foreground
+object. In particular, consistent background returns can still be wrong for a
+small object's shape. This implementation never fits local shape or depth offsets.
+
+`view_consistency` reprojects each positive camera-Z sample into supplied witness
+views. By default, two distinct witness IDs with at least 2 cm baseline from the
+query camera must agree within 15 mm, with no farther-depth contradiction. Nearer
+returns may occlude the query point and are treated as unknown. Missing views and
+small baselines provide no evidence. Duplicate witness IDs are rejected. These
+are distinct views, not necessarily statistically independent observations; pose
+bias and shared model errors can still pass. The function changes neither poses
+nor depth and returns support, contradiction, keep masks and witness counts.
+
+Freeze acceptance thresholds and witness selection before reconstruction. Save
+abstentions, original predictions and intermediate aligned surfaces. Render all
+review views with identical settings and report retained coverage alongside any
+residual improvement: a strict filter can look less contradictory simply by
+removing most of a scene. Pose refinement, correspondence verification and
+complete mesh generation remain separate operations.
