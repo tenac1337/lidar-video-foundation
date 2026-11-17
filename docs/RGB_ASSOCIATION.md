@@ -89,3 +89,29 @@ Conflicting feature identities, insufficient support and contradictions with
 known background cause abstention. This is not instance-level transitive closure
 or an automatic fallback. Neither this stage nor projected extensions establish
 sensor-depth confirmation or a complete object inventory.
+
+## Cross-checking RGB landmarks against depth
+
+`rgb_depth_audit.audit_landmark_depth(data, observations, labels,
+static_scene=True)` audits one feature tracked in at least three capture views.
+`data` uses the validated capture format; `labels` is an indexed `(N,H,W)` array
+on the same pixel grid. Each observation supplies a capture-frame index `view`,
+two-coordinate `pixel`, and positive instance `label`.
+
+The function retriangulates RGB geometry before consulting depth; depth cannot
+rescue failed RGB correspondence. For valid geometry it compares camera-axis Z
+with the original sample represented by the registered depth pixel, records its
+native sample ID, and excludes mask boundaries using the native-pixel footprint
+plus reprojection margin. Default confidence is 2 and depth tolerance is 15 mm.
+Missing, low-confidence and boundary samples remain unknown. A nearer return
+indicates occlusion or geometry disagreement. A farther return may miss visible
+foreground and vetoes depth support, even when two other views agree.
+
+`depth_supports_landmark` requires agreement in at least two camera positions
+separated by the declared minimum baseline, with no farther-return contradiction.
+This is point-level consistency, not a dense object-surface certificate. In
+particular, a background plane can agree across depth maps while failing this
+RGB check. Neither unknown depth nor depth behind an RGB landmark authorizes
+foreground carving. The audit does not change cameras, measurements, mask
+identities, association decisions or native assets. RGB features, reflections
+and supplied calibration can still be wrong; keep those uncertainties separate.
