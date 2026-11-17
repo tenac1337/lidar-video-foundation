@@ -226,7 +226,7 @@ def pair_evidence(left_features, right_features, left, right, policy=None):
     return result
 
 
-def associate_rgb(views, *, static_scene=False, policy=None):
+def associate_rgb(views, *, static_scene=False, policy=None, feature_provider=None, pair_provider=None):
     """Keep only unambiguous complete pairwise-supported observation groups.
 
     Tracks are hypotheses, not depth-validated shapes or a complete scene graph.
@@ -244,14 +244,19 @@ def associate_rgb(views, *, static_scene=False, policy=None):
         positive = positive[positive > 0]
         checked.append(dict(v, label=int(positive[0]) if len(positive) else 1))
     views = checked_views(checked, allow_empty=True)
-    extracted = [features(v["rgb"], v["labels"], policy) for v in views]
+    for v in views:
+        if np.asarray(v["rgb"]).dtype != np.uint8 or np.asarray(v["rgb"]).shape != (*v["labels"].shape, 3):
+            raise ValueError("Registered RGB uint8 image and indexed mask required")
+    extract = feature_provider or features
+    match = pair_provider or pair_evidence
+    extracted = [extract(v["rgb"], v["labels"], policy) for v in views]
     graph = nx.Graph()
     for i, v in enumerate(views):
         graph.add_nodes_from((i, int(label)) for label in np.unique(v["labels"]) if label > 0)
     checks = []
     for i, left in enumerate(views):
         for j in range(i + 1, len(views)):
-            for evidence in pair_evidence(extracted[i], extracted[j], left, views[j], policy):
+            for evidence in match(extracted[i], extracted[j], left, views[j], policy):
                 evidence.update(left_view=i, right_view=j)
                 checks.append(evidence)
                 if evidence["passed"]:

@@ -13,7 +13,13 @@ import numpy as np
 import trimesh
 from PIL import Image
 
-from lidar_video.multiview_shape import VolumePolicy, refine_support_pose, select_candidate, silhouette_volume
+from lidar_video.multiview_shape import (
+    VolumePolicy,
+    refine_support_pose,
+    refine_support_shape,
+    select_candidate,
+    silhouette_volume,
+)
 
 
 def run(manifest_path, output):
@@ -34,10 +40,11 @@ def run(manifest_path, output):
         incumbent = trimesh.load(root / config["incumbent_mesh"], force="mesh", process=False)
         training = [v for v in views if v["source_frame"] in construction]
         method = config.get("proposal_method", "silhouette_volume")
-        if method == "support_pose":
+        if method in {"support_pose", "support_shape"}:
             if config.get("static_scene") is not True:
                 raise ValueError("Explicit static_scene=True required")
-            mesh, evidence = refine_support_pose(
+            refiner = refine_support_shape if method == "support_shape" else refine_support_pose
+            mesh, evidence = refiner(
                 incumbent, training, config["support_from_world"], **config.get("policy", {})
             )
         elif method == "silhouette_volume":

@@ -194,7 +194,8 @@ def test_bounded_pose_refinement_preserves_shape_and_support_height():
         refine_support_pose(displaced, views[:2], np.eye(4), max_translation_m=0.5)
 
 
-def test_portable_runner_writes_evidence_and_refuses_overwrite(tmp_path):
+@pytest.mark.parametrize("method", ["support_pose", "support_shape"])
+def test_portable_runner_writes_evidence_and_refuses_overwrite(tmp_path, method):
     import json
 
     from PIL import Image
@@ -221,7 +222,7 @@ def test_portable_runner_writes_evidence_and_refuses_overwrite(tmp_path):
         )
     manifest = dict(
         incumbent_mesh="incumbent.ply",
-        proposal_method="support_pose",
+        proposal_method=method,
         static_scene=True,
         support_from_world=np.eye(4).tolist(),
         views=encoded,
@@ -231,8 +232,72 @@ def test_portable_runner_writes_evidence_and_refuses_overwrite(tmp_path):
     path = tmp_path / "input.json"
     path.write_text(json.dumps(manifest))
     result = run(path, tmp_path / "output")
-    assert result["proposal_evidence"]["shape_and_scale_preserved"]
+    assert result["proposal_evidence"]["support_height_preserved"]
+    if method == "support_pose":
+        assert result["proposal_evidence"]["shape_and_scale_preserved"]
     assert (tmp_path / "output/proposal-world.ply").is_file()
     assert json.loads((tmp_path / "output/result.json").read_text())["construction_sources"] == [11, 24]
     with pytest.raises(FileExistsError):
         run(path, tmp_path / "output")
+
+
+def test_landmarks_select_small_supported_component_not_largest_volume():
+    from lidar_video.multiview_shape import anchor_connected_volume
+
+    occupied = np.zeros((30, 30, 30), bool)
+    occupied[2:7, 2:7, 2:7] = True
+    occupied[15:29, 15:29, 15:29] = True
+    landmarks = (np.array([[3, 3, 3], [5, 3, 3], [3, 5, 3], [3, 3, 5]]) + 0.5) * 0.001
+    selected, evidence = anchor_connected_volume(occupied, np.zeros(3), 0.001, landmarks)
+    assert selected.sum() == 125
+    assert evidence["discarded_cells"] == 14**3
+    assert not evidence["selection_by_size"]
+    assert selected[3, 3, 3] and not selected[20, 20, 20]
+
+
+def test_inconsistent_or_ambiguous_landmarks_do_not_select_any_component():
+    from lidar_video.multiview_shape import anchor_connected_volume
+
+    occupied = np.zeros((30, 30, 30), bool)
+    occupied[2:7, 2:7, 2:7] = True
+    occupied[15:29, 15:29, 15:29] = True
+    landmarks = (np.array([[3, 3, 3], [5, 3, 3], [3, 5, 3], [20, 20, 20]]) + 0.5) * 0.001
+    with pytest.raises(ValueError, match="one connected"):
+        anchor_connected_volume(occupied, np.zeros(3), 0.001, landmarks)
+    near = np.zeros((12, 12, 12), bool)
+    near[3:5, 3:9, 3:9] = True
+    near[6:8, 3:9, 3:9] = True
+    ambiguous = np.array(
+        [[0.0055, 0.004, 0.004], [0.0055, 0.006, 0.004], [0.0055, 0.004, 0.006], [0.0055, 0.006, 0.006]]
+    )
+    with pytest.raises(ValueError, match="ambiguous"):
+        anchor_connected_volume(near, np.zeros(3), 0.001, ambiguous)
+    with pytest.raises(ValueError, match="distinct"):
+        anchor_connected_volume(occupied, np.zeros(3), 0.001, np.zeros((4, 3)))
+
+
+def test_shape_refinement_changes_prior_without_changing_support_or_camera_scale():
+    from lidar_video.multiview_shape import refine_support_shape
+
+    truth = box()
+    prior = truth.copy()
+    prior.apply_scale([0.92, 0.92, 1.06])
+    views = cameras(truth)
+    poses = [v["world_from_camera"].copy() for v in views]
+    proposal, report = refine_support_shape(prior, views[:2], np.eye(4))
+    assert proposal.is_watertight
+    assert proposal.bounds[0, 2] == pytest.approx(prior.bounds[0, 2], abs=1e-10)
+    assert 0.9 <= report["width_scale"] <= 1.1
+    assert 0.9 <= report["height_scale"] <= 1.1
+    assert not report["shape_and_scale_preserved"] and not report["accepted"]
+    for view, pose in zip(views, poses):
+        np.testing.assert_array_equal(view["world_from_camera"], pose)
+        assert silhouette_score(proposal, view)["iou"] > silhouette_score(prior, view)["iou"]
+    verdict = select_candidate({"shape": proposal}, prior, views, [11, 24], [37])
+    assert verdict["accepted"]
+    transform = np.array(report["world_from_original_world"])
+    transformed = prior.copy()
+    transformed.apply_transform(transform)
+    np.testing.assert_allclose(transformed.vertices, proposal.vertices)
+    with pytest.raises(ValueError, match="bounded support"):
+        refine_support_shape(prior, views[:2], np.eye(4), max_scale_fraction=0.2)

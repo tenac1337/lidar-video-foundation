@@ -57,3 +57,35 @@ RGB-derived hypotheses.
 Camera validation for this stage is independent of chess, reconstruction and
 simulator imports. No object classes, support template, incumbent mesh geometry
 or chess-square identities enter the association algorithm.
+
+## Optional learned correspondences
+
+`python -m lidar_video.learned_association manifest.json output-directory
+--upstream /path/to/LightGlue --device cpu` uses the official
+[cvg/LightGlue](https://github.com/cvg/LightGlue) checkout with SuperPoint features.
+Install its optional PyTorch/torchvision/kornia dependencies separately. `mps` and
+`cuda` are explicit alternatives; there is no silent device fallback. Model
+weights may be downloaded on first use. They remain in the PyTorch cache.
+
+This runner uses the same registered RGB/mask/camera manifest, fixed default
+`RGBPolicy`, 4,096 keypoints, original image resolution, all matcher layers, and a
+0.1 confidence threshold. It also requires each instance link to account for at
+least 70% of geometrically valid matches in both directions. Neural scores are
+not calibrated identity probabilities. The calibrated geometry and all-pairs
+track checks still apply; the original RootSIFT runner is unchanged.
+
+The output records the manifest, input hashes, upstream commit, settings, model
+weight hashes, feature counts, per-pair geometric checks, association proposals,
+and weaker projected extensions. Pair checkpoints contain screened matches and
+the raw match count, not every raw neural correspondence. Runtime failures leave
+`failure.json`; directories are never overwritten. Use a clean pinned upstream
+checkout for reproducible runs and preserve its dependency environment.
+
+`landmark_tracks.corroborate_chains` provides a separate stricter experiment for
+instance chains lacking all-pairs support. It links actual shared feature pixels,
+requires at least four triangulated three-view landmarks per observation, and
+checks every landmark's positive depth and reprojection in every observed camera.
+Conflicting feature identities, insufficient support and contradictions with
+known background cause abstention. This is not instance-level transitive closure
+or an automatic fallback. Neither this stage nor projected extensions establish
+sensor-depth confirmation or a complete object inventory.

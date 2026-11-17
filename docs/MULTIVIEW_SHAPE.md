@@ -39,3 +39,25 @@ coarse-to-fine search uses construction masks only, maximizes the worst per-view
 improvement first, and retains contact height. Its `policy` accepts
 `max_translation_m` and `max_yaw_degrees`. The same reserved-view veto applies;
 footprint, collisions, dynamics and changes in occlusion remain separate checks.
+
+## Explicit geometry priors
+
+`proposal_method: "support_shape"` adds bounded width and height refinement to the
+XY/yaw search. Width scales both support-horizontal axes equally; height scales
+about the original mesh's lowest support-frame vertex, preserving its base height.
+The optional `max_scale_fraction` defaults to 0.10 and cannot exceed 0.15. Camera
+calibration and global metric scale are unchanged. This refines a supplied prior;
+it does not recover unseen geometry from scratch. The returned
+`world_from_original_world` is an affine transform, unlike the rigid transform
+returned by pose-only refinement. A separate-view veto and full-scene checks are
+still required. Rebuild native collision assets before using changed geometry in
+simulation; a passing visual proposal is not a physics-ready replacement.
+
+The Python `silhouette_volume` API optionally accepts `connected_landmarks`: four
+or more distinct triangulated construction-only world points. This adds an
+explicit single-connected-object assumption. All points must identify the same
+unique six-connected voxel component within 3 mm. Component size never selects
+the result. Ambiguous or inconsistent anchors cause abstention; discarded cells
+and the prior are recorded. The selected component must still pass all bound,
+finite mesh, watertightness and subsequent silhouette checks. Do not supply
+landmarks derived from the reserved veto view.

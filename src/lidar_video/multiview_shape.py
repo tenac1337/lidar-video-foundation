@@ -116,15 +116,74 @@ def silhouette_score(mesh, view):
     )
 
 
-def silhouette_volume(views, support_from_world, *, policy=None, static_scene=False):
+def anchor_connected_volume(occupied, lower, pitch, landmarks, *, tolerance_m=0.003):
+    """Identify one component using every supplied landmark, never component size.
+
+    This explicitly assumes a single connected object. It is not a certificate
+    that the landmarks, masks, support plane or physical prior are correct.
+    """
+    landmarks = np.asarray(landmarks, float)
+    if (
+        landmarks.ndim != 2
+        or landmarks.shape[1] != 3
+        or not 4 <= len(landmarks) <= 4096
+        or not np.isfinite(landmarks).all()
+        or len(np.unique(landmarks, axis=0)) < 4
+        or not np.isfinite(tolerance_m)
+        or not 0 < tolerance_m <= 0.003
+    ):
+        raise ValueError("Four or more distinct finite construction landmarks and <=3 mm tolerance required")
+    if (
+        np.asarray(occupied).ndim != 3
+        or np.asarray(occupied).dtype != bool
+        or not np.isfinite(pitch)
+        or pitch <= 0
+    ):
+        raise ValueError("Boolean voxel volume and positive pitch required")
+    labels, count = ndimage.label(occupied, structure=ndimage.generate_binary_structure(3, 1))
+    radius = int(np.ceil(tolerance_m / pitch)) + 1
+    offsets = np.array(np.meshgrid(*([np.arange(-radius, radius + 1)] * 3), indexing="ij")).reshape(3, -1).T
+    shared = None
+    for point in landmarks:
+        center = np.floor((point - lower) / pitch).astype(int)
+        candidates = center + offsets
+        inside = np.all((candidates >= 0) & (candidates < np.array(occupied.shape)), axis=1)
+        candidates = candidates[inside]
+        centers = lower + (candidates + 0.5) * pitch
+        candidates = candidates[np.linalg.norm(centers - point, axis=1) <= tolerance_m]
+        ids = set(labels[tuple(candidates.T)].tolist()) - {0}
+        if not ids:
+            raise ValueError("A construction landmark has no nearby silhouette volume")
+        shared = ids if shared is None else shared & ids
+        if not shared:
+            raise ValueError("Construction landmarks do not support one connected component")
+    if len(shared) != 1:
+        raise ValueError("Landmarks leave connected-component identity ambiguous")
+    chosen = next(iter(shared))
+    selected = labels == chosen
+    return selected, dict(
+        prior="one connected object containing every construction landmark",
+        landmark_count=len(landmarks),
+        tolerance_m=tolerance_m,
+        input_components=int(count),
+        selected_component=int(chosen),
+        discarded_cells=int(occupied.sum() - selected.sum()),
+        selection_by_size=False,
+    )
+
+
+def silhouette_volume(
+    views, support_from_world, *, policy=None, static_scene=False, connected_landmarks=None
+):
     """Construct a new visual hull from two or more views, without a learned seed.
 
     Each occupied cell must project into at least one target and must not project
     onto observed background in another construction view. Occluders are unknown.
     This proposal requires a fully framed object in every construction camera;
     masks at image edges abstain and the volume stays inside every camera.
-    Disconnected components are retained and
-    reported; none is silently selected by size. Top/side truncation abstains.
+    Disconnected components are retained by default. Explicit construction-only
+    landmarks may identify one component under a connected-object hypothesis;
+    no component is selected by size. Top/side truncation still abstains.
     """
     if static_scene is not True:
         raise ValueError("Explicit static_scene=True required")
@@ -210,6 +269,16 @@ def silhouette_volume(views, support_from_world, *, policy=None, static_scene=Fa
     count = int(occupied.sum())
     if count < policy.min_voxels:
         raise ValueError("Construction silhouettes leave insufficient occupied volume")
+    component_selection = None
+    if connected_landmarks is not None:
+        landmarks = np.asarray(connected_landmarks, float)
+        if landmarks.ndim != 2 or landmarks.shape[1] != 3:
+            raise ValueError("World-frame construction landmarks must have shape Nx3")
+        local_landmarks = landmarks @ support[:3, :3].T + support[:3, 3]
+        occupied, component_selection = anchor_connected_volume(occupied, lower, pitch, local_landmarks)
+        count = int(occupied.sum())
+        if count < policy.min_voxels:
+            raise ValueError("Anchored volume has insufficient occupied cells")
     if occupied[:, :, -1].any() or occupied[[0, -1], :, :].any() or occupied[:, [0, -1], :].any():
         raise ValueError("Shape reaches a declared bound; geometry is not resolved")
     _, components = ndimage.label(occupied, structure=ndimage.generate_binary_structure(3, 1))
@@ -220,6 +289,7 @@ def silhouette_volume(views, support_from_world, *, policy=None, static_scene=Fa
         raise ValueError("Visual hull failed finite closed-mesh validation")
     return mesh, dict(
         method="bounded_calibrated_silhouette_volume_v1",
+        component_selection=component_selection,
         policy=asdict(policy),
         construction_sources=[v["source_frame"] for v in views],
         support_from_world=support.tolist(),
@@ -233,7 +303,8 @@ def silhouette_volume(views, support_from_world, *, policy=None, static_scene=Fa
             "supplied support plane",
             "declared height bound",
             "target fully framed in each construction camera",
-        ],
+        ]
+        + ([component_selection["prior"]] if component_selection else []),
         metric_object_accuracy_established=False,
         accepted=False,
     )
@@ -328,14 +399,54 @@ def select_candidate(
 def refine_support_pose(
     incumbent, construction_views, support_from_world, *, max_translation_m=0.008, max_yaw_degrees=15.0
 ):
-    """Bounded construction-only XY/yaw search; preserve shape, scale and height.
+    """Bounded construction-only XY/yaw search preserving shape, scale and height."""
+    return _refine_support(
+        incumbent,
+        construction_views,
+        support_from_world,
+        max_translation_m=max_translation_m,
+        max_yaw_degrees=max_yaw_degrees,
+    )
 
-    This supplies a candidate only. Call select_candidate with independent
-    validation views, then check support footprint and full-scene collisions.
-    The support frame defines the allowed motion; no camera fitting is performed.
+
+def refine_support_shape(
+    incumbent,
+    construction_views,
+    support_from_world,
+    *,
+    max_translation_m=0.008,
+    max_yaw_degrees=15.0,
+    max_scale_fraction=0.10,
+):
+    """Bounded width/height refinement of a supplied prior; preserve its base height.
+
+    This changes object geometry explicitly, not the camera calibration or global
+    metric scale. Native collision assets must be rebuilt if a proposal is adopted.
+    Require a separate-view veto and full-scene placement checks before adoption.
     """
+    return _refine_support(
+        incumbent,
+        construction_views,
+        support_from_world,
+        max_translation_m=max_translation_m,
+        max_yaw_degrees=max_yaw_degrees,
+        max_scale_fraction=max_scale_fraction,
+    )
+
+
+def _refine_support(
+    incumbent,
+    construction_views,
+    support_from_world,
+    *,
+    max_translation_m=0.008,
+    max_yaw_degrees=15.0,
+    max_scale_fraction=0.0,
+):
+    """Shared bounded search; optional width/height changes are explicit priors."""
     if (
-        not np.isfinite([max_translation_m, max_yaw_degrees]).all()
+        not np.isfinite([max_translation_m, max_yaw_degrees, max_scale_fraction]).all()
+        or not 0 <= max_scale_fraction <= 0.15
         or not 0 < max_translation_m <= 0.02
         or not 0 < max_yaw_degrees <= 30
     ):
@@ -349,16 +460,25 @@ def refine_support_pose(
     center = local.bounds.mean(axis=0)
     inverse = np.linalg.inv(support)
     limit = np.array([max_translation_m, max_translation_m, np.deg2rad(max_yaw_degrees)])
+    if max_scale_fraction:
+        limit = np.r_[limit, max_scale_fraction, max_scale_fraction]
     baseline = np.array([silhouette_score(incumbent, v)["iou"] for v in views])
     evaluations = 0
 
     def make(parameters):
-        x, y, yaw = parameters
+        x, y, yaw = parameters[:3]
         rotation = trimesh.transformations.rotation_matrix(yaw, [0, 0, 1], point=center)
         rotation[:2, 3] += [x, y]
+        shape = np.eye(4)
+        if max_scale_fraction:
+            width, height = 1 + parameters[3:]
+            shape[:3, :3] = np.diag([width, width, height])
+            pivot = center.copy()
+            pivot[2] = local.bounds[0, 2]
+            shape[:3, 3] = pivot - shape[:3, :3] @ pivot
         mesh = local.copy()
-        mesh.apply_transform(inverse @ rotation)
-        return mesh, inverse @ rotation @ support
+        mesh.apply_transform(inverse @ rotation @ shape)
+        return mesh, inverse @ rotation @ shape @ support
 
     def score(parameters):
         nonlocal evaluations
@@ -370,13 +490,13 @@ def refine_support_pose(
         values = np.array([s["iou"] for s in scores])
         return (float(np.min(values - baseline)), float(np.mean(values)))
 
-    parameters = np.zeros(3)
+    parameters = np.zeros(len(limit))
     best = score(parameters)
     # A fixed coarse-to-fine coordinate search; no reserved observations enter.
     for fraction in [0.5, 0.25, 0.125, 0.0625]:
         for _ in range(4):
             options = [(best, parameters)]
-            for axis in range(3):
+            for axis in range(len(limit)):
                 for sign in [-1, 1]:
                     p = parameters.copy()
                     p[axis] += sign * fraction * limit[axis]
@@ -388,7 +508,7 @@ def refine_support_pose(
             best, parameters = options[winner]
     mesh, transform = make(parameters)
     return mesh, dict(
-        method="bounded_support_xy_yaw_v1",
+        method="bounded_support_shape_v1" if max_scale_fraction else "bounded_support_xy_yaw_v1",
         construction_sources=[v["source_frame"] for v in views],
         max_translation_m=max_translation_m,
         max_yaw_degrees=max_yaw_degrees,
@@ -396,6 +516,10 @@ def refine_support_pose(
         yaw_degrees=float(np.rad2deg(parameters[2])),
         world_from_original_world=transform.tolist(),
         evaluations=evaluations,
-        shape_and_scale_preserved=True,
+        max_scale_fraction=max_scale_fraction,
+        width_scale=float(1 + parameters[3]) if max_scale_fraction else 1.0,
+        height_scale=float(1 + parameters[4]) if max_scale_fraction else 1.0,
+        support_height_preserved=True,
+        shape_and_scale_preserved=not max_scale_fraction or bool(np.all(parameters[3:] == 0)),
         accepted=False,
     )
