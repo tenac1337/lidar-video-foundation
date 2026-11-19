@@ -95,3 +95,40 @@ review views with identical settings and report retained coverage alongside any
 residual improvement: a strict filter can look less contradictory simply by
 removing most of a scene. Pose refinement, correspondence verification and
 complete mesh generation remain separate operations.
+
+## RGB camera refinement and foreground hypotheses
+
+`rgb_pose_refinement.refine_camera_component` accepts an explicitly static,
+connected set of calibrated cameras and triangulated RGB tracks. It jointly fits
+bounded camera corrections and landmark positions, fixing the first camera and
+retaining device-pose priors (1 cm translation, 0.5 degree rotation). A 20 mm
+landmark-displacement penalty regularizes weak depth directions. Optional native
+camera-Z anchors must already have passed confidence, neighborhood, view and
+RGB-triangulation agreement checks; a farther background return must not anchor
+an apparent foreground point. In components without usable depth anchors, metric
+scale comes from the supplied camera baselines and priors, not independent depth
+confirmation.
+
+Every fifth track is excluded from optimization. Acceptance requires convergence,
+updates away from bounds, no increase in invalid check tracks, at least 5% lower
+median check reprojection error, at most 5% worse p90, and absolute p90 <=2 pixels.
+Rejected candidates remain separate and applied poses stay unchanged. The default
+budget is 500 evaluations, with an explicit cap of 2000. A disjoint-track check
+within one recording is not an independent evaluation or a guarantee of correct
+correspondence. Repeated texture can still pass multiple-view checks. Save the
+exact tracks, settings, original/candidate/applied poses and rejection reasons.
+
+`foreground_surface.depth_ownership` takes same-camera registered sensor depth,
+RGB depth and an explicit RGB corroboration mask. It separates agreement, possible
+background returns behind RGB geometry, nearer sensor returns or mismatches, and
+unknown evidence. It does not certify an object's identity or automatically
+promote a geometry replacement. Report unique native ray IDs: repeated RGB pixels
+must not count as additional sensor measurements.
+
+`foreground_surface.open_depth_mesh` triangulates only fully observed adjacent
+image cells, including intervening pixels when using a stride. Metric edge and
+depth-jump limits prevent bridging large discontinuities. Missing samples remain
+holes. The result consists of open observed-surface patches, without object
+completion, hidden bases, semantic IDs, collision generation or physics claims.
+A foreground-aware fusion proposal must remain separate from the accepted scene
+until independent appearance, ownership and geometric checks support promotion.
