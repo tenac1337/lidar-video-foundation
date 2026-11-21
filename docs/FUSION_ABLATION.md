@@ -132,3 +132,58 @@ holes. The result consists of open observed-surface patches, without object
 completion, hidden bases, semantic IDs, collision generation or physics claims.
 A foreground-aware fusion proposal must remain separate from the accepted scene
 until independent appearance, ownership and geometric checks support promotion.
+# Direct dense RGB surfaces
+
+`python -m lidar_video.dense_reconstruction` provides a CPU path that matches in
+the original image grids rather than a rectified disparity crop. It accepts a
+construction-only NPZ with `rgb`, `K`, `world_from_camera`, and `source_frame`.
+Depth and confidence fields are not consulted. Metric scale comes from the
+supplied camera poses; disclose their provenance, particularly if their
+estimation used LiDAR. This is not an uncalibrated monocular baseline.
+
+```sh
+PYTHONPATH=src python -m lidar_video.dense_reconstruction \
+  --input construction.npz --output dense-output \
+  --reference-source-ids 12 645 1278 \
+  --excluded-source-ids 36 669 1302 --static-scene
+```
+
+The example IDs illustrate the interface, not a required sampling schedule.
+Excluded IDs must be absent from the entire input, including neighbor views.
+Use at most 64 construction images and an unused output directory. The runner
+resizes images and intrinsics together using the pixel-center convention.
+
+Camera-only neighbor selection precedes matching. Inverse-depth plane sweep
+uses patch ZNCC, minimum texture, a nonlocal ambiguity check in projected pixels,
+minimum parallax, and bounded depth sampling resolution. Pair depth estimates
+must pass reverse-camera depth and pixel round trips. Two separated cameras
+must support a point, with conflicting reciprocal estimates vetoing acceptance.
+Finally, both witness-to-witness depth maps must also corroborate the point;
+missing third edges do not count as support. Shared images and camera errors
+mean these checks are consistency evidence, not independent accuracy tests.
+
+This follows the distinction between photometric proposals and geometric
+filtering used in [multi-view stereo](https://colmap.github.io/cli.html); it is a
+separate CPU implementation, not a claim to reproduce COLMAP PatchMatch.
+
+Output includes frozen selection and thresholds, per-pair proposals and failures,
+per-reference accepted depth and witness indices, colored open surface patches,
+a voxel-selected point cloud, and a SHA256 ledger. Only fully observed adjacent
+pixels are meshed, with existing edge-length and depth-jump limits. No learned
+shape, hidden base, hole filling, watertight completion, object identity, or
+automatic scene-graph/simulation promotion is added. Textureless, specular,
+repeated-pattern, moving, poorly calibrated, or insufficient-baseline regions
+can remain incomplete or incorrect despite these checks. Review all requested
+views, including abstentions, before any qualitative comparison claim.
+
+For a gravity-aligned tabletop capture, `--z-up-support-fragments` optionally
+checks a dominant near-horizontal plane on disjoint spatial blocks and exports
+connected raised surface fragments. These are observed point sets: one object
+may split into several fragments and several objects may merge. Fragment IDs
+are not semantic instance IDs. No bottom, proxy box, or object extent beyond
+the observed bounds is fabricated. Failure to find support is recorded.
+
+`verify_depth_proposal` can check a complementary RGB reconstruction against
+the same reverse and witness-to-witness depth evidence. Preserve its original
+provenance and reject conflicts before combining outputs. Testing one proposal
+against two witnesses is not two independent estimates of its reference depth.
